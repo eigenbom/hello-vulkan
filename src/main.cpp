@@ -4,11 +4,31 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 
+#include <algorithm>
 #include <cstdlib>
+#include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
+
+enum class BuildMode
+{
+    Release,
+    Debug
+};
+
+struct BuildConfig
+{
+    BuildMode mode;
+};
+
+#ifdef NDEBUG
+const BuildConfig gBuildConfig = {BuildMode::Release};
+#else
+const BuildConfig gBuildConfig = {BuildMode::Debug};
+#endif
 
 template <class... Args> void log_error(std::string_view format_string, Args &&... args)
 {
@@ -34,10 +54,12 @@ static void key_callback(GLFWwindow *window, int key, int scancode, int action, 
 class Application
 {
   private:
-    const int width_     = 800;
-    const int height_    = 600;
-    GLFWwindow *window_  = nullptr;
-    VkInstance instance_ = nullptr;
+    const int width_                   = 800;
+    const int height_                  = 600;
+    GLFWwindow *window_                = nullptr;
+    VkInstance instance_               = nullptr;
+    const bool enable_validation_ = (gBuildConfig.mode == BuildMode::Debug);
+    const std::vector<const char *> validation_layers_ = {"VK_LAYER_KHRONOS_validation"};
 
   public:
     void run()
@@ -72,7 +94,7 @@ class Application
 
     void init_vulkan()
     {
-        createInstance();
+        create_instance();
     }
 
     void main_loop()
@@ -93,8 +115,13 @@ class Application
         glfwTerminate();
     }
 
-    void createInstance()
+    void create_instance()
     {
+        if (enable_validation_ && !check_validation_layer_support())
+        {
+            throw std::runtime_error("Validation layers not available!");
+        }
+
         VkApplicationInfo app_info{};
         app_info.sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO;
         app_info.pApplicationName   = "Hello Vulkan";
@@ -113,12 +140,15 @@ class Application
         create_info.enabledExtensionCount   = required_extensions_count;
         create_info.ppEnabledExtensionNames = required_extensions;
         create_info.enabledLayerCount       = 0;
+        create_info.enabledLayerCount =
+            enable_validation_ ? static_cast<uint32_t>(validation_layers_.size()) : 0;
+        create_info.ppEnabledLayerNames = enable_validation_ ? validation_layers_.data() : nullptr;
 
         uint32_t extensionCount = 0;
         vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
-        std::vector<VkExtensionProperties> extensions (extensionCount);
+        std::vector<VkExtensionProperties> extensions(extensionCount);
         vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
-        log_info("Found extensions.");
+        log_info("Found extensions");
         for (const auto &extension : extensions)
         {
             log_info("    {}", extension.extensionName);
@@ -126,9 +156,26 @@ class Application
 
         if (vkCreateInstance(&create_info, nullptr, &instance_) != VK_SUCCESS)
         {
-            throw std::runtime_error("failed to create instance!");
+            throw std::runtime_error("Failed to create instance");
         }
-        log_info("Created vulkan instance");
+        log_info("Created Vulkan instance");
+    }
+
+    bool check_validation_layer_support() const
+    {
+        uint32_t layer_count;
+        vkEnumerateInstanceLayerProperties(&layer_count, nullptr);
+        std::vector<VkLayerProperties> available_layers(layer_count);
+        vkEnumerateInstanceLayerProperties(&layer_count, available_layers.data());
+        return std::find_if(validation_layers_.begin(), validation_layers_.end(),
+                            [available_layers](auto validation_layer) {
+                                return std::find_if(
+                                           available_layers.begin(), available_layers.end(),
+                                           [validation_layer](auto available_layer) {
+                                               return strcmp(validation_layer,
+                                                             available_layer.layerName) == 0;
+                                           }) != available_layers.end();
+                            }) != validation_layers_.end();
     }
 };
 
