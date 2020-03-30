@@ -3,3 +3,7 @@
 ################################################################################
 
 /project-msvc/.vs/vulkan/v16
+/project-msvc/Debug
+/project-msvc/Release
+/project-msvc/packages
+/project-msvc/x64/Debug
