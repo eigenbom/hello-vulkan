@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
@@ -95,6 +96,8 @@ class Application
     void init_vulkan()
     {
         create_instance();
+        setup_debug_messenger();
+        pick_physical_device();
     }
 
     void main_loop()
@@ -177,6 +180,81 @@ class Application
                                            }) != available_layers.end();
                             }) != validation_layers_.end();
     }
+
+    void setup_debug_messenger()
+    {
+        // TODO: This
+    }
+
+    void pick_physical_device()
+    {
+        VkPhysicalDevice device = VK_NULL_HANDLE;
+        uint32_t device_count   = 0;
+        vkEnumeratePhysicalDevices(instance_, &device_count, nullptr);
+        if (device_count == 0)
+        {
+            throw std::runtime_error("No Vulkan-compatible devices found");
+        }
+
+        std::vector<VkPhysicalDevice> devices(device_count);
+        vkEnumeratePhysicalDevices(instance_, &device_count, devices.data());
+        const auto it = std::find_if(devices.begin(), devices.end(),
+                                     [this](auto d) { return is_device_suitable(d); });
+        if (it == devices.end())
+        {
+            throw std::runtime_error("No suitable Vulkan-compatible devices found");
+        };
+        device = *it;
+    }
+
+    
+    bool is_device_suitable(VkPhysicalDevice device) const
+    {
+        VkPhysicalDeviceProperties properties;
+        vkGetPhysicalDeviceProperties(device, &properties);
+        QueueFamilyIndices indices = find_queue_families(device);
+        return indices.is_complete() &&
+               properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+    }
+        
+    struct QueueFamilyIndices
+    {
+        std::optional<uint32_t> graphicsFamily;
+
+        bool is_complete() const
+        {
+            return graphicsFamily.has_value();
+        }
+    };
+
+    QueueFamilyIndices find_queue_families(VkPhysicalDevice device) const
+    {
+        QueueFamilyIndices indices;
+
+        uint32_t family_count = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, nullptr);
+
+        std::vector<VkQueueFamilyProperties> families(family_count);
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, families.data());
+
+        int i = 0;
+        for (const auto &family : families)
+        {
+            if (family.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+            {
+                indices.graphicsFamily = i;
+            }
+
+            if (indices.is_complete())
+            {
+                break;
+            }
+            i++;
+        }
+
+        return indices;
+    }
+
 };
 
 int main(int argc, char *argv[])
