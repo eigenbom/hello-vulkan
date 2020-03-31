@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <fstream>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -33,6 +34,21 @@ const BuildConfig gBuildConfig = {BuildMode::Release};
 #else
 const BuildConfig gBuildConfig = {BuildMode::Debug};
 #endif
+
+static std::vector<char> read_bytes(const std::string &filename)
+{
+    std::ifstream file {filename, std::ios::ate | std::ios::binary};
+    if (!file.is_open())
+    {
+        throw std::runtime_error(fmt::format("Failed to open {}!", filename).c_str());
+    }
+    std::size_t size = static_cast<std::size_t>(file.tellg());
+    std::vector<char> buffer(size);
+    file.seekg(0);
+    file.read(buffer.data(), size);
+    file.close();
+    return buffer;
+}
 
 template <class... Args> void log_error(std::string_view format_string, Args &&... args)
 {
@@ -117,6 +133,7 @@ class Application
         create_logical_device();
         create_swap_chain();
         create_image_views();
+        create_graphics_pipeline();
     }
 
     void main_loop()
@@ -334,10 +351,10 @@ class Application
             throw std::runtime_error("Failed to create swap chain");
         }
 
-        uint32_t image_count;
-        vkGetSwapchainImagesKHR(device_, swap_chain_, &image_count, nullptr);
-        swap_chain_images_.resize(image_count);
-        vkGetSwapchainImagesKHR(device_, swap_chain_, &image_count, swap_chain_images_.data());
+        uint32_t swap_chain_image_count;
+        vkGetSwapchainImagesKHR(device_, swap_chain_, &swap_chain_image_count, nullptr);
+        swap_chain_images_.resize(swap_chain_image_count);
+        vkGetSwapchainImagesKHR(device_, swap_chain_, &swap_chain_image_count, swap_chain_images_.data());
 
         swap_chain_image_format_ = surface_format.format;
         swap_chain_extent_       = extent;
@@ -369,6 +386,15 @@ class Application
                 throw std::runtime_error("Failed to create image views");            
             }
         }
+    }
+
+    void create_graphics_pipeline()
+    {
+        const auto vert_shader_code = read_bytes("shaders/vert.spv");
+        const auto frag_shader_code = read_bytes("shaders/frag.spv");
+
+        log_info("Loaded file shaders/vert.spv ({}b)", vert_shader_code.size());
+        log_info("Loaded file shaders/frag.spv ({}b)", frag_shader_code.size());
     }
 
     bool is_device_suitable(VkPhysicalDevice device) const

@@ -7,3 +7,4 @@
 /project-msvc/Release
 /project-msvc/packages
 /project-msvc/x64/Debug
+/shaders/*.spv
