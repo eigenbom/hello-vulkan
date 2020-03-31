@@ -68,9 +68,10 @@ class Application
     VkQueue present_queue_            = nullptr;
     VkSurfaceKHR surface_             = VK_NULL_HANDLE;
     VkSwapchainKHR swap_chain_        = VK_NULL_HANDLE;
-    std::vector<VkImage> swap_chain_images_;
     VkFormat swap_chain_image_format_ = {};
     VkExtent2D swap_chain_extent_     = {};
+    std::vector<VkImage> swap_chain_images_;
+    std::vector<VkImageView> swap_chain_image_views_;
 
     const bool enable_validation_                      = (gBuildConfig.mode == BuildMode::Debug);
     const std::vector<const char *> validation_layers_ = {"VK_LAYER_KHRONOS_validation"};
@@ -115,6 +116,7 @@ class Application
         pick_physical_device();
         create_logical_device();
         create_swap_chain();
+        create_image_views();
     }
 
     void main_loop()
@@ -128,6 +130,11 @@ class Application
 
     void cleanup()
     {
+        for (auto view : swap_chain_image_views_)
+        {        
+            vkDestroyImageView(device_, view, nullptr);
+        }
+        swap_chain_image_views_.clear();
         vkDestroySwapchainKHR(device_, swap_chain_, nullptr);
         swap_chain_ = VK_NULL_HANDLE;
         vkDestroyDevice(device_, nullptr);
@@ -303,7 +310,7 @@ class Application
         create_info.imageArrayLayers = 1;
         create_info.imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
-        QueueFamilyIndices indices = find_queue_families(physical_device_);
+        QueueFamilyIndices indices      = find_queue_families(physical_device_);
         uint32_t queue_family_indices[] = {indices.graphics_family.value(),
                                            indices.present_family.value()};
         if (indices.graphics_family != indices.present_family)
@@ -316,7 +323,7 @@ class Application
         {
             create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
         }
-        create_info.preTransform = swap_chain_support.capabilities.currentTransform;
+        create_info.preTransform   = swap_chain_support.capabilities.currentTransform;
         create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
         create_info.presentMode    = present_mode;
         create_info.clipped        = VK_TRUE;
@@ -334,6 +341,34 @@ class Application
 
         swap_chain_image_format_ = surface_format.format;
         swap_chain_extent_       = extent;
+    }
+
+    void create_image_views()
+    {
+        swap_chain_image_views_.resize(swap_chain_images_.size());
+        for (std::size_t i = 0; i < swap_chain_images_.size(); ++i)
+        {
+            VkImageViewCreateInfo create_info{};
+            create_info.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            create_info.image                           = swap_chain_images_[i];
+            create_info.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+            create_info.format                          = swap_chain_image_format_;
+            create_info.components.r                    = VK_COMPONENT_SWIZZLE_IDENTITY;
+            create_info.components.g                    = VK_COMPONENT_SWIZZLE_IDENTITY;
+            create_info.components.b                    = VK_COMPONENT_SWIZZLE_IDENTITY;
+            create_info.components.a                    = VK_COMPONENT_SWIZZLE_IDENTITY;
+            create_info.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+            create_info.subresourceRange.baseMipLevel   = 0;
+            create_info.subresourceRange.levelCount     = 1;
+            create_info.subresourceRange.baseArrayLayer = 0;
+            create_info.subresourceRange.layerCount     = 1;
+
+            if (vkCreateImageView(device_, &create_info, nullptr, &swap_chain_image_views_[i]) !=
+                VK_SUCCESS)
+            {
+                throw std::runtime_error("Failed to create image views");            
+            }
+        }
     }
 
     bool is_device_suitable(VkPhysicalDevice device) const
