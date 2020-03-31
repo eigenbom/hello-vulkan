@@ -88,7 +88,9 @@ class Application
     VkExtent2D swap_chain_extent_     = {};
     std::vector<VkImage> swap_chain_images_;
     std::vector<VkImageView> swap_chain_image_views_;
+    VkRenderPass render_pass_         = VK_NULL_HANDLE;
     VkPipelineLayout pipeline_layout_ = VK_NULL_HANDLE;
+    VkPipeline graphics_pipeline_     = VK_NULL_HANDLE;
 
     const bool enable_validation_                      = (gBuildConfig.mode == BuildMode::Debug);
     const std::vector<const char *> validation_layers_ = {"VK_LAYER_KHRONOS_validation"};
@@ -134,6 +136,7 @@ class Application
         create_logical_device();
         create_swap_chain();
         create_image_views();
+        create_render_pass();
         create_graphics_pipeline();
     }
 
@@ -148,7 +151,9 @@ class Application
 
     void cleanup()
     {
+        vkDestroyPipeline(device_, graphics_pipeline_, nullptr);
         vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
+        vkDestroyRenderPass(device_, render_pass_, nullptr);
         pipeline_layout_ = VK_NULL_HANDLE;
         for (auto view : swap_chain_image_views_)
         {
@@ -242,6 +247,7 @@ class Application
         {
             throw std::runtime_error("Failed to create window surface");
         }
+        log_info("Created surface");
     }
 
     void pick_physical_device()
@@ -262,6 +268,8 @@ class Application
             throw std::runtime_error("No suitable Vulkan-compatible devices found");
         };
         physical_device_ = *it;
+
+        log_info("Found physical device");
     }
 
     void create_logical_device()
@@ -301,10 +309,10 @@ class Application
         {
             throw std::runtime_error("Failed to create logical device");
         }
-        log_info("Created device");
-
         vkGetDeviceQueue(device_, indices.graphics_family.value(), 0, &graphics_queue_);
         vkGetDeviceQueue(device_, indices.present_family.value(), 0, &present_queue_);
+
+        log_info("Created logical device");
     }
 
     void create_swap_chain()
@@ -362,6 +370,8 @@ class Application
 
         swap_chain_image_format_ = surface_format.format;
         swap_chain_extent_       = extent;
+
+        log_info("Created swap chain");
     }
 
     void create_image_views()
@@ -390,6 +400,44 @@ class Application
                 throw std::runtime_error("Failed to create image views");
             }
         }
+
+        log_info("Created image views");
+    }
+
+    void create_render_pass()
+    {
+        VkAttachmentDescription color_attachment{};
+        color_attachment.format         = swap_chain_image_format_;
+        color_attachment.samples        = VK_SAMPLE_COUNT_1_BIT;
+        color_attachment.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color_attachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+        color_attachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        color_attachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+        color_attachment.finalLayout    = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        VkAttachmentReference color_attachment_ref{};
+        color_attachment_ref.attachment = 0;
+        color_attachment_ref.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments    = &color_attachment_ref;
+
+        VkRenderPassCreateInfo render_pass_info{};
+        render_pass_info.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        render_pass_info.attachmentCount = 1;
+        render_pass_info.pAttachments    = &color_attachment;
+        render_pass_info.subpassCount    = 1;
+        render_pass_info.pSubpasses      = &subpass;
+
+        if (vkCreateRenderPass(device_, &render_pass_info, nullptr, &render_pass_) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create render pass");
+        }
+
+        log_info("Created render pass");
     }
 
     void create_graphics_pipeline()
@@ -449,7 +497,7 @@ class Application
         scissor.extent = swap_chain_extent_;
 
         VkPipelineViewportStateCreateInfo viewport_state{};
-        viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewport_state.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
         viewport_state.viewportCount = 1;
         viewport_state.pViewports    = &viewport;
         viewport_state.scissorCount  = 1;
@@ -458,7 +506,7 @@ class Application
         // Rasterizer
 
         VkPipelineRasterizationStateCreateInfo rasterizer{};
-        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterizer.sType            = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
         rasterizer.depthClampEnable = VK_FALSE;
         rasterizer.rasterizerDiscardEnable = VK_FALSE;
         rasterizer.polygonMode             = VK_POLYGON_MODE_FILL;
@@ -469,41 +517,67 @@ class Application
 
         // Multisampling
 
-        VkPipelineMultisampleStateCreateInfo multisampling { };
+        VkPipelineMultisampleStateCreateInfo multisampling{};
         multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-        multisampling.sampleShadingEnable = VK_FALSE;
+        multisampling.sampleShadingEnable  = VK_FALSE;
         multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-        
+
         // Color blending
 
-        VkPipelineColorBlendAttachmentState color_blend_attachment {};
+        VkPipelineColorBlendAttachmentState color_blend_attachment{};
         color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
                                                 VK_COLOR_COMPONENT_G_BIT |
                                                 VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
         color_blend_attachment.blendEnable = VK_FALSE;
 
         VkPipelineColorBlendStateCreateInfo color_blending{};
-        color_blending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-        color_blending.logicOpEnable = VK_FALSE;
+        color_blending.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        color_blending.logicOpEnable   = VK_FALSE;
         color_blending.attachmentCount = 1;
         color_blending.pAttachments    = &color_blend_attachment;
 
-        // Create pipeline
+        // Create pipeline layout
 
-        VkPipelineLayoutCreateInfo pipeline_layout_info {};
+        VkPipelineLayoutCreateInfo pipeline_layout_info{};
         pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        
+
         if (vkCreatePipelineLayout(device_, &pipeline_layout_info, nullptr, &pipeline_layout_) !=
             VK_SUCCESS)
         {
             throw std::runtime_error("Failed to create pipeline layout");
         }
 
+        // Create graphics pipeline
+
+        VkGraphicsPipelineCreateInfo pipeline_info{};
+        pipeline_info.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipeline_info.stageCount          = 2;
+        pipeline_info.pStages             = shader_stages;
+        pipeline_info.pVertexInputState   = &vertex_input_info;
+        pipeline_info.pInputAssemblyState = &input_assembly;
+        pipeline_info.pViewportState      = &viewport_state;
+        pipeline_info.pRasterizationState = &rasterizer;
+        pipeline_info.pMultisampleState   = &multisampling;
+        pipeline_info.pColorBlendState    = &color_blending;
+        pipeline_info.layout              = pipeline_layout_;
+        pipeline_info.renderPass          = render_pass_;
+        pipeline_info.subpass             = 0;
+
+        if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipeline_info, nullptr,
+                                      &graphics_pipeline_) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create graphics pipeline");
+        }
+
         // Cleanup
 
         vkDestroyShaderModule(device_, frag_shader_module, nullptr);
         vkDestroyShaderModule(device_, vert_shader_module, nullptr);
+
+        log_info("Created graphics pipeline");
     }
+
+    // Helpers
 
     bool is_device_suitable(VkPhysicalDevice device) const
     {
