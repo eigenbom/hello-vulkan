@@ -95,6 +95,8 @@ class Application
     std::vector<VkFramebuffer> swap_chain_framebuffers_ = {};
     VkCommandPool command_pool_                         = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> command_buffers_       = {};
+    VkSemaphore image_available_semaphore_              = VK_NULL_HANDLE;
+    VkSemaphore render_finished_semaphore_              = VK_NULL_HANDLE;
 
     const bool enable_validation_                      = (gBuildConfig.mode == BuildMode::Debug);
     const std::vector<const char *> validation_layers_ = {"VK_LAYER_KHRONOS_validation"};
@@ -145,19 +147,24 @@ class Application
         create_framebuffers();
         create_command_pool();
         create_command_buffers();
+        create_semaphores();
     }
 
     void main_loop()
     {
-        // HWND windowHandle = glfwGetWin32Window(window_);
         while (!glfwWindowShouldClose(window_))
         {
             glfwPollEvents();
+            draw_frame();
         }
     }
 
     void cleanup()
     {
+        vkDestroySemaphore(device_, render_finished_semaphore_, nullptr);
+        render_finished_semaphore_ = VK_NULL_HANDLE;
+        vkDestroySemaphore(device_, image_available_semaphore_, nullptr);
+        image_available_semaphore_ = VK_NULL_HANDLE;
         vkDestroyCommandPool(device_, command_pool_, nullptr);
         for (auto framebuffer : swap_chain_framebuffers_)
         {
@@ -449,12 +456,22 @@ class Application
             .pColorAttachments    = &color_attachment_ref,
         };
 
+        VkSubpassDependency dependency = {
+            .srcSubpass    = VK_SUBPASS_EXTERNAL,
+            .dstSubpass    = 0,
+            .srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .srcAccessMask = 0,
+            .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT};
+
         VkRenderPassCreateInfo render_pass_info = {
             .sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
             .attachmentCount = 1,
             .pAttachments    = &color_attachment,
             .subpassCount    = 1,
             .pSubpasses      = &subpass,
+            .dependencyCount = 1,
+            .pDependencies   = &dependency,
         };
 
         if (vkCreateRenderPass(device_, &render_pass_info, nullptr, &render_pass_) != VK_SUCCESS)
@@ -678,17 +695,15 @@ class Application
                 throw std::runtime_error("Failed to begin recording command buffer!");
             }
 
-            VkClearValue clear_color               = {0.0f, 0.0f, 0.0f, 1.0f};
+            VkClearValue clear_color = {0.0f, 0.0f, 0.0f, 1.0f};
+
             VkRenderPassBeginInfo render_pass_info = {
-                .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-                .renderPass = render_pass_,
-                .framebuffer = swap_chain_framebuffers_[i],
-                .renderArea  = {
-                    .offset = {0, 0}, 
-                    .extent = swap_chain_extent_
-                },
+                .sType           = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+                .renderPass      = render_pass_,
+                .framebuffer     = swap_chain_framebuffers_[i],
+                .renderArea      = {.offset = {0, 0}, .extent = swap_chain_extent_},
                 .clearValueCount = 1,
-                .pClearValues = &clear_color,
+                .pClearValues    = &clear_color,
             };
 
             vkCmdBeginRenderPass(command_buffers_[i], &render_pass_info,
@@ -698,10 +713,64 @@ class Application
             vkCmdDraw(command_buffers_[i], 3, 1, 0, 0);
             vkCmdEndRenderPass(command_buffers_[i]);
             if (vkEndCommandBuffer(command_buffers_[i]) != VK_SUCCESS)
-            {               
+            {
                 throw std::runtime_error("Failed to record command buffer!");
             }
         }
+    }
+
+    void create_semaphores()
+    {
+        VkSemaphoreCreateInfo semaphore_info = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        if (vkCreateSemaphore(device_, &semaphore_info, nullptr, &image_available_semaphore_) !=
+            VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create semaphore!");
+        }
+
+        if (vkCreateSemaphore(device_, &semaphore_info, nullptr, &render_finished_semaphore_) !=
+            VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create semaphore!");
+        }
+    }
+
+    void draw_frame()
+    {
+        uint32_t image_index = 0;
+        vkAcquireNextImageKHR(device_, swap_chain_, UINT64_MAX, image_available_semaphore_,
+                              VK_NULL_HANDLE, &image_index);
+
+        VkSemaphore wait_semaphores[]      = {image_available_semaphore_};
+        VkPipelineStageFlags wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+        VkSemaphore signal_semaphores[]    = {render_finished_semaphore_};
+
+        VkSubmitInfo submit_info = {.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                                    .waitSemaphoreCount   = 1,
+                                    .pWaitSemaphores      = wait_semaphores,
+                                    .pWaitDstStageMask    = wait_stages,
+                                    .commandBufferCount   = 1,
+                                    .pCommandBuffers      = &command_buffers_[image_index],
+                                    .signalSemaphoreCount = 1,
+                                    .pSignalSemaphores    = signal_semaphores};
+
+        if (vkQueueSubmit(graphics_queue_, 1, &submit_info, VK_NULL_HANDLE) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to submit draw command buffer!");
+        }
+
+        VkSwapchainKHR swap_chains[] = {swap_chain_};
+
+        VkPresentInfoKHR present_info = {
+            .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = signal_semaphores,
+            .swapchainCount = 1,
+            .pSwapchains = swap_chains,
+            .pImageIndices = &image_index
+        };
+
+        vkQueuePresentKHR(present_queue_, &present_info);
     }
 
     // Helpers
@@ -786,9 +855,9 @@ class Application
 
     struct SwapChainSupportDetails
     {
-        VkSurfaceCapabilitiesKHR capabilities;
-        std::vector<VkSurfaceFormatKHR> formats;
-        std::vector<VkPresentModeKHR> present_modes;
+        VkSurfaceCapabilitiesKHR capabilities       = {};
+        std::vector<VkSurfaceFormatKHR> formats     = {};
+        std::vector<VkPresentModeKHR> present_modes = {};
     };
 
     SwapChainSupportDetails query_swap_chain_support(VkPhysicalDevice device) const
