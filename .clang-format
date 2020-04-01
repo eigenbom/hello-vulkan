@@ -6,3 +6,4 @@ IndentWidth: 4
 Language: Cpp
 AlignConsecutiveAssignments: true
 ColumnLimit: 100
+AlignOperands: true
