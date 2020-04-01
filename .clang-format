@@ -7,3 +7,4 @@ Language: Cpp
 AlignConsecutiveAssignments: true
 ColumnLimit: 100
 AlignOperands: true
+SpaceBeforeCpp11BracedList: true

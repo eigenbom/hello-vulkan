@@ -37,7 +37,7 @@ const BuildConfig gBuildConfig = {BuildMode::Debug};
 
 static std::vector<char> read_bytes(const std::string &filename)
 {
-    std::ifstream file{filename, std::ios::ate | std::ios::binary};
+    std::ifstream file {filename, std::ios::ate | std::ios::binary};
     if (!file.is_open())
     {
         throw std::runtime_error(fmt::format("Failed to open {}!", filename).c_str());
@@ -193,18 +193,18 @@ class Application
             throw std::runtime_error("Validation layers not available!!");
         }
 
-        const VkApplicationInfo app_info{.sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-                                         .pApplicationName   = "Hello Vulkan",
-                                         .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
-                                         .pEngineName        = "No Engine",
-                                         .engineVersion      = VK_MAKE_VERSION(1, 0, 0),
-                                         .apiVersion         = VK_API_VERSION_1_0};
+        const VkApplicationInfo app_info {.sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+                                          .pApplicationName   = "Hello Vulkan",
+                                          .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
+                                          .pEngineName        = "No Engine",
+                                          .engineVersion      = VK_MAKE_VERSION(1, 0, 0),
+                                          .apiVersion         = VK_API_VERSION_1_0};
 
         uint32_t required_extensions_count = 0;
         const char **required_extensions =
             glfwGetRequiredInstanceExtensions(&required_extensions_count);
 
-        VkInstanceCreateInfo create_info{
+        VkInstanceCreateInfo create_info {
             .sType            = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
             .pApplicationInfo = &app_info,
             .enabledLayerCount =
@@ -443,7 +443,6 @@ class Application
             .layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         };
 
-
         VkSubpassDescription subpass = {
             .pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS,
             .colorAttachmentCount = 1,
@@ -551,7 +550,7 @@ class Application
 
         // Multisampling
 
-        VkPipelineMultisampleStateCreateInfo multisampling{
+        VkPipelineMultisampleStateCreateInfo multisampling {
             .sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
             .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
             .sampleShadingEnable  = VK_FALSE,
@@ -573,7 +572,7 @@ class Application
 
         // Create pipeline layout
 
-        VkPipelineLayoutCreateInfo pipeline_layout_info{};
+        VkPipelineLayoutCreateInfo pipeline_layout_info {};
         pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 
         if (vkCreatePipelineLayout(device_, &pipeline_layout_info, nullptr, &pipeline_layout_) !=
@@ -584,7 +583,7 @@ class Application
 
         // Create graphics pipeline
 
-        const VkGraphicsPipelineCreateInfo pipeline_info{
+        const VkGraphicsPipelineCreateInfo pipeline_info {
             .sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
             .stageCount          = 2,
             .pStages             = shader_stages,
@@ -617,7 +616,7 @@ class Application
         swap_chain_framebuffers_.resize(swap_chain_image_views_.size());
         for (std::size_t i = 0; i < swap_chain_image_views_.size(); ++i)
         {
-            VkImageView attachments[] = {swap_chain_image_views_[i]};
+            VkImageView attachments[]                = {swap_chain_image_views_[i]};
             VkFramebufferCreateInfo framebuffer_info = {
                 .sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
                 .renderPass      = render_pass_,
@@ -640,10 +639,10 @@ class Application
     {
         QueueFamilyIndices queue_family_indices = find_queue_families(physical_device_);
 
-        VkCommandPoolCreateInfo pool_info{.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-                                          .flags = 0,
-                                          .queueFamilyIndex =
-                                              queue_family_indices.graphics_family.value()};
+        VkCommandPoolCreateInfo pool_info {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+                                           .flags = 0,
+                                           .queueFamilyIndex =
+                                               queue_family_indices.graphics_family.value()};
 
         if (vkCreateCommandPool(device_, &pool_info, nullptr, &command_pool_) != VK_SUCCESS)
         {
@@ -678,6 +677,30 @@ class Application
             {
                 throw std::runtime_error("Failed to begin recording command buffer!");
             }
+
+            VkClearValue clear_color               = {0.0f, 0.0f, 0.0f, 1.0f};
+            VkRenderPassBeginInfo render_pass_info = {
+                .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+                .renderPass = render_pass_,
+                .framebuffer = swap_chain_framebuffers_[i],
+                .renderArea  = {
+                    .offset = {0, 0}, 
+                    .extent = swap_chain_extent_
+                },
+                .clearValueCount = 1,
+                .pClearValues = &clear_color,
+            };
+
+            vkCmdBeginRenderPass(command_buffers_[i], &render_pass_info,
+                                 VK_SUBPASS_CONTENTS_INLINE);
+            vkCmdBindPipeline(command_buffers_[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              graphics_pipeline_);
+            vkCmdDraw(command_buffers_[i], 3, 1, 0, 0);
+            vkCmdEndRenderPass(command_buffers_[i]);
+            if (vkEndCommandBuffer(command_buffers_[i]) != VK_SUCCESS)
+            {               
+                throw std::runtime_error("Failed to record command buffer!");
+            }
         }
     }
 
@@ -706,8 +729,8 @@ class Application
         std::vector<VkExtensionProperties> available_extensions(extension_count);
         vkEnumerateDeviceExtensionProperties(device, nullptr, &extension_count,
                                              available_extensions.data());
-        std::set<std::string> required_extensions{device_extensions_.begin(),
-                                                  device_extensions_.end()};
+        std::set<std::string> required_extensions {device_extensions_.begin(),
+                                                   device_extensions_.end()};
         for (const auto &ext : available_extensions)
         {
             required_extensions.erase(ext.extensionName);
