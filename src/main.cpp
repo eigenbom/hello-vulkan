@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -98,7 +99,8 @@ class Application
     VkSemaphore image_available_semaphore_              = VK_NULL_HANDLE;
     VkSemaphore render_finished_semaphore_              = VK_NULL_HANDLE;
 
-    const bool enable_validation_                      = (gBuildConfig.mode == BuildMode::Debug);
+    const bool enable_validation_ = false;
+     // (gBuildConfig.mode == BuildMode::Debug);
     const std::vector<const char *> validation_layers_ = {"VK_LAYER_KHRONOS_validation"};
     const std::vector<const char *> device_extensions_ = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
@@ -152,11 +154,24 @@ class Application
 
     void main_loop()
     {
+        auto time_start = std::chrono::steady_clock::now();
+        uint32_t frame_count = 0;
         while (!glfwWindowShouldClose(window_))
         {
             glfwPollEvents();
             draw_frame();
+
+            ++frame_count;
+            if (frame_count == 1000)
+            {
+                auto time_end = std::chrono::steady_clock::now();
+                log_info("Frame time: {} FPS",
+                         1000000.0 / (std::chrono::duration_cast<std::chrono::microseconds>(time_end - time_start).count() / 1000));
+                time_start  = time_end;
+                frame_count = 0;
+            }
         }
+        vkDeviceWaitIdle(device_);
     }
 
     void cleanup()
@@ -771,6 +786,8 @@ class Application
         };
 
         vkQueuePresentKHR(present_queue_, &present_info);
+        
+        // vkQueueWaitIdle(present_queue_);
     }
 
     // Helpers
