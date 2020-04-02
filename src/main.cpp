@@ -409,9 +409,11 @@ class Application
         std::vector<VkPhysicalDevice> devices(device_count);
         vkEnumeratePhysicalDevices(instance_, &device_count, devices.data());
 
-        auto it =
-            std::partition(devices.begin(), devices.end(),
-                           [this](auto d) { return is_device_suitable(d); });
+        const auto surface = surface_;
+        const auto it =
+            std::partition(devices.begin(), devices.end(), [surface](auto d) {
+                return is_device_suitable(d, surface);
+            });
 
         if (it == devices.begin())
         {
@@ -433,7 +435,8 @@ class Application
 
     void create_logical_device()
     {
-        QueueFamilyIndices indices = find_queue_families(physical_device_);
+        const QueueFamilyIndices indices =
+            find_queue_families(physical_device_, surface_);
 
         std::vector<VkDeviceQueueCreateInfo> queue_create_infos;
         std::set<uint32_t> unique_queue_families = {
@@ -482,15 +485,17 @@ class Application
 
     void create_swap_chain()
     {
+        Expects(width_ > 0 && height_ > 0);
+
         const SwapChainSupportDetails swap_chain_support =
-            query_swap_chain_support(physical_device_);
+            query_swap_chain_support(physical_device_, surface_);
 
         const VkSurfaceFormatKHR surface_format =
             choose_swap_surface_format(swap_chain_support.formats);
         const VkPresentModeKHR present_mode =
             choose_swap_present_mode(swap_chain_support.present_modes);
-        const VkExtent2D extent =
-            choose_swap_extent(swap_chain_support.capabilities);
+        const VkExtent2D extent = choose_swap_extent(
+            swap_chain_support.capabilities, width_, height_);
 
         const uint32_t min_images =
             swap_chain_support.capabilities.minImageCount;
@@ -517,7 +522,7 @@ class Application
         };
 
         const QueueFamilyIndices indices =
-            find_queue_families(physical_device_);
+            find_queue_families(physical_device_, surface_);
         const uint32_t queue_family_indices[] = {
             indices.graphics_family.value(), indices.present_family.value()};
         if (indices.graphics_family != indices.present_family)
@@ -643,9 +648,9 @@ class Application
         const auto vert_shader_code = read_bytes("shaders/vert.spv");
         const auto frag_shader_code = read_bytes("shaders/frag.spv");
         const VkShaderModule vert_shader_module =
-            create_shader_module(vert_shader_code);
+            create_shader_module(device_, vert_shader_code);
         const VkShaderModule frag_shader_module =
-            create_shader_module(frag_shader_code);
+            create_shader_module(device_, frag_shader_code);
 
         const VkPipelineShaderStageCreateInfo shader_stages[2] = {
             {
@@ -812,10 +817,10 @@ class Application
 
     void create_command_pool()
     {
-        QueueFamilyIndices queue_family_indices =
-            find_queue_families(physical_device_);
+        const QueueFamilyIndices queue_family_indices =
+            find_queue_families(physical_device_, surface_);
 
-        VkCommandPoolCreateInfo pool_info = {
+        const VkCommandPoolCreateInfo pool_info = {
             .sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
             .flags            = 0,
             .queueFamilyIndex = queue_family_indices.graphics_family.value()};
@@ -985,28 +990,29 @@ class Application
 
     // Helpers
 
-    bool is_device_suitable(VkPhysicalDevice device) const
+    static bool is_device_suitable(VkPhysicalDevice device,
+                                   VkSurfaceKHR surface)
     {
         const bool extensions_supported =
             check_device_extension_support(device);
-        const bool swap_chain_adequate = [this, device,
+        const bool swap_chain_adequate = [surface, device,
                                           extensions_supported]() {
             if (!extensions_supported)
             {
                 return false;
             }
-            const auto swap_details = query_swap_chain_support(device);
+            const auto swap_details = query_swap_chain_support(device, surface);
             return !swap_details.formats.empty() &&
                    !swap_details.present_modes.empty();
         }();
-        const QueueFamilyIndices indices = find_queue_families(device);
+        const QueueFamilyIndices indices = find_queue_families(device, surface);
         return indices.is_complete() && extensions_supported &&
                swap_chain_adequate;
     }
 
-    bool check_device_extension_support(VkPhysicalDevice device) const
+    static bool check_device_extension_support(VkPhysicalDevice device)
     {
-        uint32_t extension_count;
+        uint32_t extension_count = 0;
         vkEnumerateDeviceExtensionProperties(device, nullptr, &extension_count,
                                              nullptr);
         std::vector<VkExtensionProperties> available_extensions(
@@ -1014,7 +1020,6 @@ class Application
         vkEnumerateDeviceExtensionProperties(device, nullptr, &extension_count,
                                              available_extensions.data());
 
-        // TODO: Better
         std::set<std::string> required_extensions {device_extensions_.begin(),
                                                    device_extensions_.end()};
         for (const auto &ext : available_extensions)
@@ -1035,7 +1040,8 @@ class Application
         }
     };
 
-    QueueFamilyIndices find_queue_families(VkPhysicalDevice device) const
+    static QueueFamilyIndices find_queue_families(VkPhysicalDevice device,
+                                                  VkSurfaceKHR surface)
     {
         QueueFamilyIndices indices = {};
 
@@ -1056,7 +1062,7 @@ class Application
             }
 
             VkBool32 present_support = false;
-            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface_,
+            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface,
                                                  &present_support);
             if (present_support)
             {
@@ -1080,37 +1086,37 @@ class Application
         std::vector<VkPresentModeKHR> present_modes = {};
     };
 
-    SwapChainSupportDetails query_swap_chain_support(
-        VkPhysicalDevice device) const
+    static SwapChainSupportDetails query_swap_chain_support(
+        VkPhysicalDevice device, VkSurfaceKHR surface)
     {
         SwapChainSupportDetails details = {};
-        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface_,
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface,
                                                   &details.capabilities);
         uint32_t format_count = 0;
-        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface_, &format_count,
+        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count,
                                              nullptr);
         if (format_count != 0)
         {
             details.formats.resize(format_count);
-            vkGetPhysicalDeviceSurfaceFormatsKHR(
-                device, surface_, &format_count, details.formats.data());
+            vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count,
+                                                 details.formats.data());
         }
 
         uint32_t present_mode_count = 0;
-        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface_,
+        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface,
                                                   &present_mode_count, nullptr);
         if (present_mode_count != 0)
         {
             details.present_modes.resize(present_mode_count);
             vkGetPhysicalDeviceSurfacePresentModesKHR(
-                device, surface_, &present_mode_count,
+                device, surface, &present_mode_count,
                 details.present_modes.data());
         }
         return details;
     }
 
-    VkSurfaceFormatKHR choose_swap_surface_format(
-        const std::vector<VkSurfaceFormatKHR> &available_formats) const
+    static VkSurfaceFormatKHR choose_swap_surface_format(
+        const std::vector<VkSurfaceFormatKHR> &available_formats)
     {
         Expects(!available_formats.empty());
 
@@ -1125,9 +1131,11 @@ class Application
         return available_formats.at(0);
     }
 
-    VkPresentModeKHR choose_swap_present_mode(
-        const std::vector<VkPresentModeKHR> &available_present_modes) const
+    static VkPresentModeKHR choose_swap_present_mode(
+        const std::vector<VkPresentModeKHR> &available_present_modes)
     {
+        Expects(!available_present_modes.empty());
+
         if (std::find(
                 available_present_modes.begin(), available_present_modes.end(),
                 VK_PRESENT_MODE_MAILBOX_KHR) != available_present_modes.end())
@@ -1140,8 +1148,9 @@ class Application
         }
     }
 
-    VkExtent2D choose_swap_extent(
-        const VkSurfaceCapabilitiesKHR &capabilities) const noexcept
+    static VkExtent2D choose_swap_extent(
+        const VkSurfaceCapabilitiesKHR &capabilities, uint32_t width,
+        uint32_t height) noexcept
     {
         if (capabilities.currentExtent.width != UINT32_MAX)
         {
@@ -1149,18 +1158,16 @@ class Application
         }
         else
         {
-            return {std::clamp(gsl::narrow_cast<uint32_t>(width_),
-                               capabilities.minImageExtent.width,
-                               capabilities.maxImageExtent.width),
-                    std::clamp(gsl::narrow_cast<uint32_t>(height_),
-                               capabilities.minImageExtent.height,
-                               capabilities.maxImageExtent.height)};
+            const auto &minExtent = capabilities.minImageExtent;
+            const auto &maxExtent = capabilities.maxImageExtent;
+            return {std::clamp(width, minExtent.width, maxExtent.width),
+                    std::clamp(height, minExtent.height, maxExtent.height)};
         }
     }
 
     [[gsl::suppress(26490)]] // Don't warn about the reinterpret_cast below
-    VkShaderModule
-    create_shader_module(const std::vector<char> &code) const
+    static VkShaderModule
+    create_shader_module(VkDevice device, const std::vector<char> &code)
     {
         VkShaderModuleCreateInfo create_info = {
             .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
@@ -1169,7 +1176,7 @@ class Application
         };
 
         VkShaderModule shader_module;
-        if (vkCreateShaderModule(device_, &create_info, nullptr,
+        if (vkCreateShaderModule(device, &create_info, nullptr,
                                  &shader_module) != VK_SUCCESS)
         {
             throw std::runtime_error("Failed to create shader module!");
@@ -1219,7 +1226,8 @@ class Application
         return VK_FALSE;
     }
 
-    static VkDebugUtilsMessengerCreateInfoEXT get_debug_utils_messenger_info() noexcept
+    static VkDebugUtilsMessengerCreateInfoEXT
+    get_debug_utils_messenger_info() noexcept
     {
         return {
             .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
