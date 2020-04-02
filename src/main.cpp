@@ -67,6 +67,12 @@ void log_info(std::string_view format_string, Args &&... args)
     log("Info", format_string, std::forward<Args>(args)...);
 }
 
+template <class... Args>
+void log_warn(std::string_view format_string, Args &&... args)
+{
+    log("Warning", format_string, std::forward<Args>(args)...);
+}
+
 static std::vector<char> read_bytes(const std::string &filename)
 {
     std::ifstream file {filename, std::ios::ate | std::ios::binary};
@@ -97,11 +103,46 @@ static void key_callback(GLFWwindow *window, int key, int scancode, int action,
     }
 }
 
+// Explicitly loaded extension
+[[gsl::suppress(26490)]] // Don't warn about the reinterpret_cast below
+static VkResult
+CreateDebugUtilsMessengerEXT(
+    VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT *pCreateInfo,
+    const VkAllocationCallbacks *pAllocator,
+    VkDebugUtilsMessengerEXT *pDebugMessenger) noexcept
+{
+    const auto func = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
+        vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT"));
+    if (func != nullptr)
+    {
+        return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
+    }
+    else
+    {
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    }
+}
+
+// Explicitly loaded extension
+[[gsl::suppress(26490)]] // Don't warn about the reinterpret_cast below
+static void
+DestroyDebugUtilsMessengerEXT(VkInstance instance,
+                              VkDebugUtilsMessengerEXT debugMessenger,
+                              const VkAllocationCallbacks *pAllocator) noexcept
+{
+    const auto func = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+        vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT"));
+    if (func != nullptr)
+    {
+        func(instance, debugMessenger, pAllocator);
+    }
+}
+
 class Application
 {
   private:
     static constexpr int max_frames_in_flight_ = 2;
-    static constexpr bool enable_validation_ =
+    static constexpr bool enable_validation_layers_ =
         (gBuildConfig.mode == BuildMode::Debug);
     static constexpr std::array<const char *, 1> validation_layers_ {
         "VK_LAYER_KHRONOS_validation"};
@@ -134,6 +175,7 @@ class Application
     std::vector<VkFence> in_flight_fences_               = {};
     std::vector<VkFence> images_in_flight_               = {};
     int current_frame_                                   = 0;
+    VkDebugUtilsMessengerEXT debug_messenger_            = VK_NULL_HANDLE;
 
   public:
     void run()
@@ -245,6 +287,11 @@ class Application
         device_ = nullptr;
         vkDestroySurfaceKHR(instance_, surface_, nullptr);
         surface_ = VK_NULL_HANDLE;
+        if (enable_validation_layers_)
+        {
+            DestroyDebugUtilsMessengerEXT(instance_, debug_messenger_, nullptr);
+            debug_messenger_ = VK_NULL_HANDLE;
+        }
         vkDestroyInstance(instance_, nullptr);
         instance_ = nullptr;
         glfwDestroyWindow(window_);
@@ -254,7 +301,7 @@ class Application
 
     void create_instance()
     {
-        if (enable_validation_ && !check_validation_layer_support())
+        if (enable_validation_layers_ && !check_validation_layer_support())
         {
             throw std::runtime_error("Validation layers not available!!");
         }
@@ -268,14 +315,17 @@ class Application
             .apiVersion         = VK_API_VERSION_1_0};
 
         const auto required_extensions = get_required_extensions();
-
-        VkInstanceCreateInfo create_info {
-            .sType            = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+        const auto debug_utils_messenger_info =
+            get_debug_utils_messenger_info();
+        const VkInstanceCreateInfo create_info {
+            .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+            .pNext = enable_validation_layers_ ? &debug_utils_messenger_info
+                                               : nullptr,
             .pApplicationInfo = &app_info,
             .enabledLayerCount =
-                enable_validation_ ? validation_layers_.size() : 0u,
+                enable_validation_layers_ ? validation_layers_.size() : 0u,
             .ppEnabledLayerNames =
-                enable_validation_ ? validation_layers_.data() : nullptr,
+                enable_validation_layers_ ? validation_layers_.data() : nullptr,
             .enabledExtensionCount   = required_extensions.size(),
             .ppEnabledExtensionNames = required_extensions.data(),
         };
@@ -325,7 +375,16 @@ class Application
 
     void setup_debug_messenger()
     {
-        // TODO: This
+        if (!enable_validation_layers_)
+            return;
+        const auto debug_utils_messenger_info =
+            get_debug_utils_messenger_info();
+        if (CreateDebugUtilsMessengerEXT(instance_, &debug_utils_messenger_info,
+                                         nullptr,
+                                         &debug_messenger_) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failes to set up debug messenger!");
+        }
     }
 
     void create_surface()
@@ -400,9 +459,9 @@ class Application
             .queueCreateInfoCount = queue_create_infos.size(),
             .pQueueCreateInfos    = queue_create_infos.data(),
             .enabledLayerCount =
-                enable_validation_ ? validation_layers_.size() : 0u,
+                enable_validation_layers_ ? validation_layers_.size() : 0u,
             .ppEnabledLayerNames =
-                enable_validation_ ? validation_layers_.data() : nullptr,
+                enable_validation_layers_ ? validation_layers_.data() : nullptr,
             .enabledExtensionCount   = device_extensions_.size(),
             .ppEnabledExtensionNames = device_extensions_.data(),
             .pEnabledFeatures        = &device_features,
@@ -1123,14 +1182,56 @@ class Application
         uint32_t glfw_extension_count = 0;
         const char *const *glfw_extensions =
             glfwGetRequiredInstanceExtensions(&glfw_extension_count);
-        std::vector<const char *> extensions(glfw_extensions, std::next(glfw_extensions, glfw_extension_count));
-        if (enable_validation_)
+        std::vector<const char *> extensions(
+            glfw_extensions, std::next(glfw_extensions, glfw_extension_count));
+        if (enable_validation_layers_)
         {
             extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
         }
         return extensions;
     }
 
+    static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
+        VkDebugUtilsMessageSeverityFlagBitsEXT message_severity,
+        [[maybe_unused]] VkDebugUtilsMessageTypeFlagsEXT message_type,
+        const VkDebugUtilsMessengerCallbackDataEXT *callback_data,
+        [[maybe_unused]] void *user_data)
+    {
+        Expects(callback_data != nullptr);
+
+        switch (message_severity)
+        {
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT:
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT: {
+            log_info("[Vulkan] {}", callback_data->pMessage);
+            break;
+        }
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT: {
+            log_warn("[Vulkan] {}", callback_data->pMessage);
+            break;
+        }
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT: {
+            log_error("[Vulkan] {}", callback_data->pMessage);
+            break;
+        }
+        }
+
+        return VK_FALSE;
+    }
+
+    static VkDebugUtilsMessengerCreateInfoEXT get_debug_utils_messenger_info() noexcept
+    {
+        return {
+            .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+            .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+                               VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                               VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+            .messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                           VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                           VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+            .pfnUserCallback = debug_callback,
+        };
+    }
 };
 
 int main(int argc, char **argv)
