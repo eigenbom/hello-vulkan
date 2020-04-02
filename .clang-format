@@ -5,6 +5,6 @@ IndentWidth: 4
 ---
 Language: Cpp
 AlignConsecutiveAssignments: true
-ColumnLimit: 100
+ColumnLimit: 80
 AlignOperands: true
 SpaceBeforeCpp11BracedList: true
