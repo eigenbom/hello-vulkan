@@ -165,14 +165,14 @@ class Application
             draw_frame();
 
             ++frame_count;
-            if (frame_count == 1000)
+            if (frame_count == 10000)
             {
                 auto time_end = std::chrono::steady_clock::now();
                 log_info("Frame time: {} FPS",
                          1000000.0 / (std::chrono::duration_cast<std::chrono::microseconds>(
                                           time_end - time_start)
                                           .count() /
-                                      1000));
+                                      10000));
                 time_start  = time_end;
                 frame_count = 0;
             }
@@ -305,15 +305,26 @@ class Application
 
         std::vector<VkPhysicalDevice> devices(device_count);
         vkEnumeratePhysicalDevices(instance_, &device_count, devices.data());
-        const auto it = std::find_if(devices.begin(), devices.end(),
-                                     [this](auto d) { return is_device_suitable(d); });
-        if (it == devices.end())
+
+        auto it = std::partition(devices.begin(), devices.end(), [this](auto d) { return is_device_suitable(d); });
+
+        if (it == devices.begin())
         {
             throw std::runtime_error("No suitable Vulkan-compatible devices found!");
-        };
-        physical_device_ = *it;
+        }
 
-        log_info("Found physical device");
+        for (auto jt = devices.begin(); jt != it; ++jt)
+        {
+            VkPhysicalDeviceProperties properties;
+            vkGetPhysicalDeviceProperties(*jt, &properties);
+            // VkPhysicalDeviceFeatures features;
+            // vkGetPhysicalDeviceFeatures(*jt, &features);            
+            log_info("Found physical device \"{}\"", properties.deviceName);
+        }
+
+        physical_device_ = devices[0];
+
+        log_info("Selected physical device");
     }
 
     void create_logical_device()
@@ -675,6 +686,8 @@ class Application
                 throw std::runtime_error("Failed to create framebuffer!");
             }
         }
+
+        log_info("Created framebuffers");
     }
 
     void create_command_pool()
@@ -690,6 +703,8 @@ class Application
         {
             throw std::runtime_error("Failed to create command pool!");
         }
+
+        log_info("Created command pool");
     }
 
     void create_command_buffers()
@@ -742,6 +757,8 @@ class Application
                 throw std::runtime_error("Failed to record command buffer!");
             }
         }
+
+        log_info("Created command buffers");
     }
 
     void create_sync_objects()
@@ -774,6 +791,8 @@ class Application
                 throw std::runtime_error("Failed to create fence!");
             }
         }
+
+        log_info("Created sync objects");
     }
 
     void draw_frame()
