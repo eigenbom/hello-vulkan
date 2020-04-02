@@ -267,9 +267,7 @@ class Application
             .engineVersion      = VK_MAKE_VERSION(1, 0, 0),
             .apiVersion         = VK_API_VERSION_1_0};
 
-        uint32_t required_extensions_count = 0;
-        const char *const *required_extensions =
-            glfwGetRequiredInstanceExtensions(&required_extensions_count);
+        const auto required_extensions = get_required_extensions();
 
         VkInstanceCreateInfo create_info {
             .sType            = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
@@ -278,8 +276,8 @@ class Application
                 enable_validation_ ? validation_layers_.size() : 0u,
             .ppEnabledLayerNames =
                 enable_validation_ ? validation_layers_.data() : nullptr,
-            .enabledExtensionCount   = required_extensions_count,
-            .ppEnabledExtensionNames = required_extensions,
+            .enabledExtensionCount   = required_extensions.size(),
+            .ppEnabledExtensionNames = required_extensions.data(),
         };
 
         uint32_t extensionCount = 0;
@@ -899,7 +897,7 @@ class Application
             .waitSemaphoreCount   = std::size(wait_semaphores),
             .pWaitSemaphores      = &wait_semaphores[0],
             .pWaitDstStageMask    = &wait_stages[0],
-            .commandBufferCount   = std::size(command_buffers_),
+            .commandBufferCount   = 1,
             .pCommandBuffers      = &command_buffers_.at(image_index),
             .signalSemaphoreCount = std::size(signal_semaphores),
             .pSignalSemaphores    = &signal_semaphores[0]};
@@ -1101,7 +1099,7 @@ class Application
         }
     }
 
-    [[gsl::suppress(26490)]] // reinterpret_cast
+    [[gsl::suppress(26490)]] // Don't warn about the reinterpret_cast below
     VkShaderModule
     create_shader_module(const std::vector<char> &code) const
     {
@@ -1119,6 +1117,20 @@ class Application
         }
         return shader_module;
     }
+
+    static std::vector<const char *> get_required_extensions()
+    {
+        uint32_t glfw_extension_count = 0;
+        const char *const *glfw_extensions =
+            glfwGetRequiredInstanceExtensions(&glfw_extension_count);
+        std::vector<const char *> extensions(glfw_extensions, std::next(glfw_extensions, glfw_extension_count));
+        if (enable_validation_)
+        {
+            extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        }
+        return extensions;
+    }
+
 };
 
 int main(int argc, char **argv)
