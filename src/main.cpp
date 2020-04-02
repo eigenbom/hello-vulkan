@@ -73,36 +73,6 @@ void log_warn(std::string_view format_string, Args &&... args)
     log("Warning", format_string, std::forward<Args>(args)...);
 }
 
-static std::vector<char> read_bytes(const std::string &filename)
-{
-    std::ifstream file {filename, std::ios::ate | std::ios::binary};
-    if (!file.is_open())
-    {
-        throw std::runtime_error(
-            fmt::format("Failed to open {}!", filename).c_str());
-    }
-    const std::size_t size = static_cast<std::size_t>(file.tellg());
-    std::vector<char> buffer(size);
-    file.seekg(0);
-    file.read(buffer.data(), size);
-    file.close();
-    return buffer;
-}
-
-static void error_callback(int error, const char *description)
-{
-    log_error(description);
-}
-
-static void key_callback(GLFWwindow *window, int key, int scancode, int action,
-                         int mods) noexcept
-{
-    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
-    {
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
-    }
-}
-
 // Explicitly loaded extension
 [[gsl::suppress(26490)]] // Don't warn about the reinterpret_cast below
 static VkResult
@@ -149,10 +119,10 @@ class Application
     static constexpr std::array<const char *, 1> device_extensions_ {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
-    int width_          = 800;
-    int height_         = 600;
-    GLFWwindow *window_ = nullptr;
+    static constexpr int initial_width_  = 800;
+    static constexpr int initial_height_ = 600;
 
+    GLFWwindow *window_                                  = nullptr;
     VkInstance instance_                                 = nullptr;
     VkPhysicalDevice physical_device_                    = nullptr;
     VkDevice device_                                     = nullptr;
@@ -175,6 +145,7 @@ class Application
     std::vector<VkFence> in_flight_fences_               = {};
     std::vector<VkFence> images_in_flight_               = {};
     int current_frame_                                   = 0;
+    bool framebuffer_resized_                            = false;
     VkDebugUtilsMessengerEXT debug_messenger_            = VK_NULL_HANDLE;
 
   public:
@@ -198,15 +169,16 @@ class Application
         glfwSetErrorCallback(error_callback);
 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-        window_ =
-            glfwCreateWindow(width_, height_, "Hello Vulkan", nullptr, nullptr);
+        window_ = glfwCreateWindow(initial_width_, initial_height_,
+                                   "Hello Vulkan", nullptr, nullptr);
         if (!window_)
         {
             throw std::runtime_error(
                 "Window or OpenGL context creation failed!");
         }
+        glfwSetWindowUserPointer(window_, this);
         glfwSetKeyCallback(window_, key_callback);
+        glfwSetFramebufferSizeCallback(window_, framebuffer_resize_callback);
         log_info("Created window");
     }
 
@@ -256,6 +228,7 @@ class Application
 
     void cleanup()
     {
+        cleanup_swap_chain();
         for (gsl::index i = 0; i < max_frames_in_flight_; ++i)
         {
             vkDestroySemaphore(device_, render_finished_semaphores_.at(i),
@@ -267,22 +240,6 @@ class Application
         render_finished_semaphores_.clear();
         image_available_semaphores_.clear();
         vkDestroyCommandPool(device_, command_pool_, nullptr);
-        for (auto framebuffer : swap_chain_framebuffers_)
-        {
-            vkDestroyFramebuffer(device_, framebuffer, nullptr);
-        }
-        swap_chain_framebuffers_.clear();
-        vkDestroyPipeline(device_, graphics_pipeline_, nullptr);
-        vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
-        vkDestroyRenderPass(device_, render_pass_, nullptr);
-        pipeline_layout_ = VK_NULL_HANDLE;
-        for (auto view : swap_chain_image_views_)
-        {
-            vkDestroyImageView(device_, view, nullptr);
-        }
-        swap_chain_image_views_.clear();
-        vkDestroySwapchainKHR(device_, swap_chain_, nullptr);
-        swap_chain_ = VK_NULL_HANDLE;
         vkDestroyDevice(device_, nullptr);
         device_ = nullptr;
         vkDestroySurfaceKHR(instance_, surface_, nullptr);
@@ -323,10 +280,13 @@ class Application
                                                : nullptr,
             .pApplicationInfo = &app_info,
             .enabledLayerCount =
-                enable_validation_layers_ ? validation_layers_.size() : 0u,
+                enable_validation_layers_
+                    ? gsl::narrow_cast<uint32_t>(validation_layers_.size())
+                    : 0u,
             .ppEnabledLayerNames =
                 enable_validation_layers_ ? validation_layers_.data() : nullptr,
-            .enabledExtensionCount   = required_extensions.size(),
+            .enabledExtensionCount =
+                gsl::narrow_cast<uint32_t>(required_extensions.size()),
             .ppEnabledExtensionNames = required_extensions.data(),
         };
 
@@ -458,14 +418,18 @@ class Application
 
         VkPhysicalDeviceFeatures device_features = {};
         VkDeviceCreateInfo create_info           = {
-            .sType                = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-            .queueCreateInfoCount = queue_create_infos.size(),
-            .pQueueCreateInfos    = queue_create_infos.data(),
+            .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .queueCreateInfoCount =
+                gsl::narrow_cast<uint32_t>(queue_create_infos.size()),
+            .pQueueCreateInfos = queue_create_infos.data(),
             .enabledLayerCount =
-                enable_validation_layers_ ? validation_layers_.size() : 0u,
+                enable_validation_layers_
+                    ? gsl::narrow_cast<uint32_t>(validation_layers_.size())
+                    : 0u,
             .ppEnabledLayerNames =
                 enable_validation_layers_ ? validation_layers_.data() : nullptr,
-            .enabledExtensionCount   = device_extensions_.size(),
+            .enabledExtensionCount =
+                gsl::narrow_cast<uint32_t>(device_extensions_.size()),
             .ppEnabledExtensionNames = device_extensions_.data(),
             .pEnabledFeatures        = &device_features,
         };
@@ -485,8 +449,6 @@ class Application
 
     void create_swap_chain()
     {
-        Expects(width_ > 0 && height_ > 0);
-
         const SwapChainSupportDetails swap_chain_support =
             query_swap_chain_support(physical_device_, surface_);
 
@@ -494,8 +456,14 @@ class Application
             choose_swap_surface_format(swap_chain_support.formats);
         const VkPresentModeKHR present_mode =
             choose_swap_present_mode(swap_chain_support.present_modes);
-        const VkExtent2D extent = choose_swap_extent(
-            swap_chain_support.capabilities, width_, height_);
+
+        int width  = 0;
+        int height = 0;
+        glfwGetFramebufferSize(window_, &width, &height);
+        Expects(width >= 0 && height >= 0);
+
+        const VkExtent2D extent =
+            choose_swap_extent(swap_chain_support.capabilities, width, height);
 
         const uint32_t min_images =
             swap_chain_support.capabilities.minImageCount;
@@ -842,7 +810,8 @@ class Application
             .sType       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
             .commandPool = command_pool_,
             .level       = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-            .commandBufferCount = command_buffers_.size(),
+            .commandBufferCount =
+                gsl::narrow_cast<uint32_t>(command_buffers_.size()),
         };
 
         if (vkAllocateCommandBuffers(device_, &alloc_info,
@@ -936,10 +905,23 @@ class Application
         vkWaitForFences(device_, 1, &in_flight_fences_.at(current_frame_),
                         VK_TRUE, UINT64_MAX);
 
-        uint32_t image_index = 0;
-        vkAcquireNextImageKHR(device_, swap_chain_, UINT64_MAX,
-                              image_available_semaphores_.at(current_frame_),
-                              VK_NULL_HANDLE, &image_index);
+        uint32_t image_index      = 0;
+        const auto acquire_result = vkAcquireNextImageKHR(
+            device_, swap_chain_, UINT64_MAX,
+            image_available_semaphores_.at(current_frame_), VK_NULL_HANDLE,
+            &image_index);
+
+        if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR ||
+            acquire_result == VK_SUBOPTIMAL_KHR || framebuffer_resized_)
+        {
+            framebuffer_resized_ = false;
+            recreate_swap_chain();
+            return;
+        }
+        else if (acquire_result != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to acquire swap chain image!");
+        }
 
         if (images_in_flight_.at(image_index) != VK_NULL_HANDLE)
         {
@@ -986,6 +968,44 @@ class Application
         vkQueuePresentKHR(present_queue_, &present_info);
 
         current_frame_ = (current_frame_ + 1) % max_frames_in_flight_;
+    }
+
+    void cleanup_swap_chain() noexcept
+    {
+        for (auto framebuffer : swap_chain_framebuffers_)
+        {
+            vkDestroyFramebuffer(device_, framebuffer, nullptr);
+        }
+        swap_chain_framebuffers_.clear();
+        vkFreeCommandBuffers(
+            device_, command_pool_,
+            gsl::narrow_cast<uint32_t>(command_buffers_.size()),
+            command_buffers_.data());
+        vkDestroyPipeline(device_, graphics_pipeline_, nullptr);
+        vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
+        vkDestroyRenderPass(device_, render_pass_, nullptr);
+        pipeline_layout_ = VK_NULL_HANDLE;
+        for (auto view : swap_chain_image_views_)
+        {
+            vkDestroyImageView(device_, view, nullptr);
+        }
+        swap_chain_image_views_.clear();
+        vkDestroySwapchainKHR(device_, swap_chain_, nullptr);
+        swap_chain_ = VK_NULL_HANDLE;
+    }
+
+    void recreate_swap_chain()
+    {
+        vkDeviceWaitIdle(device_);
+
+        cleanup_swap_chain();
+
+        create_swap_chain();
+        create_image_views();
+        create_render_pass();
+        create_graphics_pipeline();
+        create_framebuffers();
+        create_command_buffers();
     }
 
     // Helpers
@@ -1171,7 +1191,7 @@ class Application
     {
         VkShaderModuleCreateInfo create_info = {
             .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-            .codeSize = code.size(),
+            .codeSize = gsl::narrow_cast<uint32_t>(code.size()),
             .pCode    = reinterpret_cast<const uint32_t *>(code.data()),
         };
 
@@ -1239,6 +1259,44 @@ class Application
                            VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
             .pfnUserCallback = debug_callback,
         };
+    }
+
+    static std::vector<char> read_bytes(const std::string &filename)
+    {
+        std::ifstream file {filename, std::ios::ate | std::ios::binary};
+        if (!file.is_open())
+        {
+            throw std::runtime_error(
+                fmt::format("Failed to open {}!", filename).c_str());
+        }
+        const std::size_t size = static_cast<std::size_t>(file.tellg());
+        std::vector<char> buffer(size);
+        file.seekg(0);
+        file.read(buffer.data(), size);
+        file.close();
+        return buffer;
+    }
+
+    static void error_callback(int error, const char *description)
+    {
+        log_error(description);
+    }
+
+    static void key_callback(GLFWwindow *window, int key, int scancode,
+                             int action, int mods) noexcept
+    {
+        if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
+        {
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+        }
+    }
+
+    static void framebuffer_resize_callback(GLFWwindow *window, int width,
+                                            int height) noexcept
+    {
+        auto *app = static_cast<Application *>(glfwGetWindowUserPointer(window));
+        app->framebuffer_resized_ = true;
+
     }
 };
 
