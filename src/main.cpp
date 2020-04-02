@@ -156,7 +156,7 @@ class Application
         glfwSetErrorCallback(error_callback);
 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        // glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
         window_ =
             glfwCreateWindow(width_, height_, "Hello Vulkan", nullptr, nullptr);
         if (!window_)
@@ -384,15 +384,15 @@ class Application
             indices.present_family.value(),
         };
 
-        constexpr float queue_priority =
-            1.0f; // Needs lifetime beyond this loop
+        // NB: queue_priorities lifetime needs to match queue_create_infos
+        constexpr float queue_priorities[] = {1.0f};
         for (const uint32_t family : unique_queue_families)
         {
             VkDeviceQueueCreateInfo info = {};
             info.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
             info.queueFamilyIndex = family;
-            info.queueCount       = 1;
-            info.pQueuePriorities = &queue_priority;
+            info.queueCount       = std::size(queue_priorities);
+            info.pQueuePriorities = &queue_priorities[0];
             queue_create_infos.push_back(info);
         }
 
@@ -425,7 +425,7 @@ class Application
 
     void create_swap_chain()
     {
-        SwapChainSupportDetails swap_chain_support =
+        const SwapChainSupportDetails swap_chain_support =
             query_swap_chain_support(physical_device_);
 
         const VkSurfaceFormatKHR surface_format =
@@ -459,7 +459,8 @@ class Application
             .oldSwapchain   = VK_NULL_HANDLE,
         };
 
-        QueueFamilyIndices indices = find_queue_families(physical_device_);
+        const QueueFamilyIndices indices =
+            find_queue_families(physical_device_);
         const uint32_t queue_family_indices[] = {
             indices.graphics_family.value(), indices.present_family.value()};
         if (indices.graphics_family != indices.present_family)
@@ -479,7 +480,7 @@ class Application
             throw std::runtime_error("Failed to create swap chain!");
         }
 
-        uint32_t swap_chain_image_count;
+        uint32_t swap_chain_image_count = 0;
         vkGetSwapchainImagesKHR(device_, swap_chain_, &swap_chain_image_count,
                                 nullptr);
         swap_chain_images_.resize(swap_chain_image_count);
@@ -497,7 +498,7 @@ class Application
         swap_chain_image_views_.resize(swap_chain_images_.size());
         for (gsl::index i = 0; i < std::ssize(swap_chain_images_); ++i)
         {
-            VkImageViewCreateInfo create_info = {
+            const VkImageViewCreateInfo create_info = {
                 .sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
                 .image    = swap_chain_images_.at(i),
                 .viewType = VK_IMAGE_VIEW_TYPE_2D,
@@ -529,7 +530,7 @@ class Application
 
     void create_render_pass()
     {
-        VkAttachmentDescription color_attachment = {
+        const VkAttachmentDescription color_attachment = {
             .format         = swap_chain_image_format_,
             .samples        = VK_SAMPLE_COUNT_1_BIT,
             .loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR,
@@ -540,18 +541,18 @@ class Application
             .finalLayout    = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
         };
 
-        VkAttachmentReference color_attachment_ref = {
+        const VkAttachmentReference color_attachment_ref = {
             .attachment = 0,
             .layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         };
 
-        VkSubpassDescription subpass = {
+        const VkSubpassDescription subpass = {
             .pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS,
             .colorAttachmentCount = 1,
             .pColorAttachments    = &color_attachment_ref,
         };
 
-        VkSubpassDependency dependency = {
+        const VkSubpassDependency dependency = {
             .srcSubpass    = VK_SUBPASS_EXTERNAL,
             .dstSubpass    = 0,
             .srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
@@ -559,7 +560,7 @@ class Application
             .srcAccessMask = 0,
             .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT};
 
-        VkRenderPassCreateInfo render_pass_info = {
+        const VkRenderPassCreateInfo render_pass_info = {
             .sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
             .attachmentCount = 1,
             .pAttachments    = &color_attachment,
@@ -734,7 +735,7 @@ class Application
             const VkFramebufferCreateInfo framebuffer_info = {
                 .sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
                 .renderPass      = render_pass_,
-                .attachmentCount = 1,
+                .attachmentCount = std::size(attachments),
                 .pAttachments    = &attachments[0],
                 .width           = swap_chain_extent_.width,
                 .height          = swap_chain_extent_.height,
