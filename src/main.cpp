@@ -266,7 +266,7 @@ class Application
         vkDeviceWaitIdle(device_);
     }
 
-    void cleanup()
+    void cleanup() noexcept
     {
         cleanup_swap_chain();
         vkDestroyBuffer(device_, vertex_buffer_, nullptr);
@@ -856,53 +856,29 @@ class Application
 
         log_info("Created command pool");
     }
-
+        
     void create_vertex_buffer()
     {
-        const VkBufferCreateInfo buffer_info = {
-            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size =
-                (sizeof(Vertex) * static_cast<VkDeviceSize>(vertices_.size())),
-            .usage       = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
+        const VkDeviceSize buffer_size =
+            (sizeof(Vertex) * static_cast<VkDeviceSize>(vertices_.size()));
 
-        if (vkCreateBuffer(device_, &buffer_info, nullptr, &vertex_buffer_) !=
-            VK_SUCCESS)
-        {
-            throw std::runtime_error("failed to create vertex buffer!");
-        }
-
-        VkMemoryRequirements memory_requirements = {};
-        vkGetBufferMemoryRequirements(device_, vertex_buffer_,
-                                      &memory_requirements);
-
-        const auto memory_type = find_memory_type(
-            physical_device_, memory_requirements.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        const VkMemoryAllocateInfo alloc_info = {
-            .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-            .allocationSize  = memory_requirements.size,
-            .memoryTypeIndex = memory_type,
-        };
-
-        if (vkAllocateMemory(device_, &alloc_info, nullptr,
-                             &vertex_buffer_memory_) != VK_SUCCESS)
-        {
-            throw std::runtime_error(
-                "Failed to allocate vertex buffer memory!");
-        }
-
-        vkBindBufferMemory(device_, vertex_buffer_, vertex_buffer_memory_, 0);
+        std::tie(vertex_buffer_, vertex_buffer_memory_) = create_buffer(physical_device_, device_, buffer_size,
+                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
         void *data = nullptr;
-        vkMapMemory(device_, vertex_buffer_memory_, 0, buffer_info.size, 0,
-                    &data);
+        vkMapMemory(device_, vertex_buffer_memory_, 0, buffer_size, 0, &data);
+        memcpy(data, vertices_.data(), gsl::narrow_cast<std::size_t>(buffer_size));
+
+        /*
         // Copy vertices_ into data
         const auto data_span = gsl::make_span(
             static_cast<Vertex *>(data),
-            gsl::narrow_cast<std::size_t>(buffer_info.size / sizeof(Vertex)));
+            gsl::narrow_cast<std::size_t>(buffer_size / sizeof(Vertex)));
         std::copy(vertices_.begin(), vertices_.end(), data_span.begin());
+        */
+
         vkUnmapMemory(device_, vertex_buffer_memory_);
     }
 
@@ -1445,11 +1421,13 @@ class Application
         vkGetPhysicalDeviceMemoryProperties(physical_device,
                                             &memory_properties);
 
+        [[gsl::suppress(bounds.2)]]
+        [[gsl::suppress(bounds.4)]]
         for (uint32_t i = 0; i < memory_properties.memoryTypeCount; ++i)
         {
             const bool matches_type_filter = (type_filter & (1 << i)) != 0;
             const bool matches_properties =
-                (gsl::at(memory_properties.memoryTypes, i).propertyFlags &
+                (memory_properties.memoryTypes[i].propertyFlags &
                  properties) == properties;
             if (matches_type_filter && matches_properties)
             {
@@ -1458,6 +1436,47 @@ class Application
         }
 
         throw std::runtime_error("Failed to find suitable memory type!");
+    }
+
+    static std::pair<VkBuffer, VkDeviceMemory> create_buffer(VkPhysicalDevice physical_device, VkDevice device,
+                              VkDeviceSize size, VkBufferUsageFlags usage,
+                              VkMemoryPropertyFlags properties)
+    {
+        const VkBufferCreateInfo buffer_info = {
+            .sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size        = size,
+            .usage       = usage,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
+
+        VkBuffer buffer;
+        if (vkCreateBuffer(device, &buffer_info, nullptr, &buffer) !=
+            VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to create vertex buffer!");
+        }
+
+        VkMemoryRequirements memory_requirements = {};
+        vkGetBufferMemoryRequirements(device, buffer, &memory_requirements);
+
+        const auto memory_type = find_memory_type(
+            physical_device, memory_requirements.memoryTypeBits, properties);
+        const VkMemoryAllocateInfo alloc_info = {
+            .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize  = memory_requirements.size,
+            .memoryTypeIndex = memory_type,
+        };
+
+        VkDeviceMemory buffer_memory;
+        if (vkAllocateMemory(device, &alloc_info, nullptr, &buffer_memory) !=
+            VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to allocate vertex buffer memory!");
+        }
+
+        vkBindBufferMemory(device, buffer, buffer_memory, 0);
+
+        return {buffer, buffer_memory};
     }
 };
 
