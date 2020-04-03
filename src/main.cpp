@@ -108,6 +108,25 @@ DestroyDebugUtilsMessengerEXT(VkInstance instance,
     }
 }
 
+// Explicitly loaded extension
+[[gsl::suppress(26490)]] // Don't warn about the reinterpret_cast below
+static VkResult
+WaitSemaphoresEXT(VkInstance instance, VkDevice device,
+                  const VkSemaphoreWaitInfo *pWaitInfo,
+                  uint64_t timeout) noexcept
+{
+    const auto func = reinterpret_cast<PFN_vkWaitSemaphores>(
+        vkGetInstanceProcAddr(instance, "vkWaitSemaphoresEXT"));
+    if (func != nullptr)
+    {
+        return func(device, pWaitInfo, timeout);
+    }
+    else
+    {
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    }
+}
+
 class Application
 {
   private:
@@ -229,16 +248,21 @@ class Application
     void cleanup()
     {
         cleanup_swap_chain();
-        for (gsl::index i = 0; i < max_frames_in_flight_; ++i)
+        for (auto semaphore : render_finished_semaphores_)
         {
-            vkDestroySemaphore(device_, render_finished_semaphores_.at(i),
-                               nullptr);
-            vkDestroySemaphore(device_, image_available_semaphores_.at(i),
-                               nullptr);
-            vkDestroyFence(device_, in_flight_fences_.at(i), nullptr);
+            vkDestroySemaphore(device_, semaphore, nullptr);
         }
         render_finished_semaphores_.clear();
+        for (auto semaphore : image_available_semaphores_)
+        {
+            vkDestroySemaphore(device_, semaphore, nullptr);
+        }
         image_available_semaphores_.clear();
+        for (auto fence : in_flight_fences_)
+        {
+            vkDestroyFence(device_, fence, nullptr);
+        }
+        in_flight_fences_.clear();
         vkDestroyCommandPool(device_, command_pool_, nullptr);
         vkDestroyDevice(device_, nullptr);
         device_ = nullptr;
@@ -972,6 +996,9 @@ class Application
 
     void cleanup_swap_chain() noexcept
     {
+        // vkWaitSemaphores(device_, )
+        // vkResetFences(device_, 1, &in_flight_fences_.at(current_frame_));
+
         for (auto framebuffer : swap_chain_framebuffers_)
         {
             vkDestroyFramebuffer(device_, framebuffer, nullptr);
@@ -996,7 +1023,30 @@ class Application
 
     void recreate_swap_chain()
     {
+        // Wait until not-minimised
+        int width  = 0;
+        int height = 0;
+        glfwGetFramebufferSize(window_, &width, &height);
+        while (width == 0 || height == 0)
+        {
+            glfwGetFramebufferSize(window_, &width, &height);
+            glfwWaitEvents();
+        }
+
         vkDeviceWaitIdle(device_);
+
+        // NB: Could use vkWaitSemaphore instead of recreating the semaphore
+        for (auto &semaphore : image_available_semaphores_)
+        {
+            vkDestroySemaphore(device_, semaphore, nullptr);
+            const VkSemaphoreCreateInfo semaphore_info = {
+                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+            if (vkCreateSemaphore(device_, &semaphore_info, nullptr,
+                                  &semaphore) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Failed to create semaphore!");
+            }
+        }
 
         cleanup_swap_chain();
 
@@ -1006,6 +1056,8 @@ class Application
         create_graphics_pipeline();
         create_framebuffers();
         create_command_buffers();
+
+        log_info("Recreated swap chain");
     }
 
     // Helpers
@@ -1294,9 +1346,9 @@ class Application
     static void framebuffer_resize_callback(GLFWwindow *window, int width,
                                             int height) noexcept
     {
-        auto *app = static_cast<Application *>(glfwGetWindowUserPointer(window));
+        auto *app =
+            static_cast<Application *>(glfwGetWindowUserPointer(window));
         app->framebuffer_resized_ = true;
-
     }
 };
 
