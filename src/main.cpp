@@ -10,11 +10,13 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 
+#include <glm/glm.hpp>
 #include <gsl/gsl>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -108,38 +110,54 @@ DestroyDebugUtilsMessengerEXT(VkInstance instance,
     }
 }
 
-// Explicitly loaded extension
-[[gsl::suppress(26490)]] // Don't warn about the reinterpret_cast below
-static VkResult
-WaitSemaphoresEXT(VkInstance instance, VkDevice device,
-                  const VkSemaphoreWaitInfo *pWaitInfo,
-                  uint64_t timeout) noexcept
+struct Vertex
 {
-    const auto func = reinterpret_cast<PFN_vkWaitSemaphores>(
-        vkGetInstanceProcAddr(instance, "vkWaitSemaphoresEXT"));
-    if (func != nullptr)
+    glm::vec2 pos;
+    glm::vec3 colour;
+
+    static constexpr VkVertexInputBindingDescription
+    get_binding_description() noexcept
     {
-        return func(device, pWaitInfo, timeout);
+        return {.binding   = 0,
+                .stride    = sizeof(Vertex),
+                .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
     }
-    else
+
+    static constexpr std::array<VkVertexInputAttributeDescription, 2>
+    get_attribute_descriptions() noexcept
     {
-        return VK_ERROR_EXTENSION_NOT_PRESENT;
+        return {{
+            {.location = 0,
+             .binding  = 0,
+             .format   = VK_FORMAT_R32G32_SFLOAT,
+             .offset   = offsetof(Vertex, pos)},
+
+            {.location = 1,
+             .binding  = 0,
+             .format   = VK_FORMAT_R32G32B32_SFLOAT,
+             .offset   = offsetof(Vertex, colour)},
+        }};
     }
-}
+};
 
 class Application
 {
   private:
+    static constexpr int initial_width_        = 800;
+    static constexpr int initial_height_       = 600;
     static constexpr int max_frames_in_flight_ = 2;
     static constexpr bool enable_validation_layers_ =
         (gBuildConfig.mode == BuildMode::Debug);
-    static constexpr std::array<const char *, 1> validation_layers_ {
+    static constexpr std::array<const char *, 1> validation_layers_ = {
         "VK_LAYER_KHRONOS_validation"};
-    static constexpr std::array<const char *, 1> device_extensions_ {
+    static constexpr std::array<const char *, 1> device_extensions_ = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
-    static constexpr int initial_width_  = 800;
-    static constexpr int initial_height_ = 600;
+    static constexpr std::array<Vertex, 3> vertices_ = {{
+        {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+        {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+        {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+    }};
 
     GLFWwindow *window_                                  = nullptr;
     VkInstance instance_                                 = nullptr;
@@ -166,6 +184,8 @@ class Application
     int current_frame_                                   = 0;
     bool framebuffer_resized_                            = false;
     VkDebugUtilsMessengerEXT debug_messenger_            = VK_NULL_HANDLE;
+    VkBuffer vertex_buffer_                              = VK_NULL_HANDLE;
+    VkDeviceMemory vertex_buffer_memory_                 = VK_NULL_HANDLE;
 
   public:
     void run()
@@ -214,6 +234,7 @@ class Application
         create_graphics_pipeline();
         create_framebuffers();
         create_command_pool();
+        create_vertex_buffer();
         create_command_buffers();
         create_sync_objects();
     }
@@ -248,6 +269,10 @@ class Application
     void cleanup()
     {
         cleanup_swap_chain();
+        vkDestroyBuffer(device_, vertex_buffer_, nullptr);
+        vertex_buffer_ = VK_NULL_HANDLE;
+        vkFreeMemory(device_, vertex_buffer_memory_, nullptr);
+        vertex_buffer_memory_ = VK_NULL_HANDLE;
         for (auto semaphore : render_finished_semaphores_)
         {
             vkDestroySemaphore(device_, semaphore, nullptr);
@@ -435,7 +460,8 @@ class Application
             VkDeviceQueueCreateInfo info = {};
             info.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
             info.queueFamilyIndex = family;
-            info.queueCount       = std::size(queue_priorities);
+            info.queueCount =
+                gsl::narrow_cast<uint32_t>(std::size(queue_priorities));
             info.pQueuePriorities = &queue_priorities[0];
             queue_create_infos.push_back(info);
         }
@@ -584,7 +610,7 @@ class Application
 
     void create_render_pass()
     {
-        const VkAttachmentDescription color_attachment = {
+        const VkAttachmentDescription colour_attachment = {
             .format         = swap_chain_image_format_,
             .samples        = VK_SAMPLE_COUNT_1_BIT,
             .loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR,
@@ -595,7 +621,7 @@ class Application
             .finalLayout    = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
         };
 
-        const VkAttachmentReference color_attachment_ref = {
+        const VkAttachmentReference colour_attachment_ref = {
             .attachment = 0,
             .layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         };
@@ -603,7 +629,7 @@ class Application
         const VkSubpassDescription subpass = {
             .pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS,
             .colorAttachmentCount = 1,
-            .pColorAttachments    = &color_attachment_ref,
+            .pColorAttachments    = &colour_attachment_ref,
         };
 
         const VkSubpassDependency dependency = {
@@ -617,7 +643,7 @@ class Application
         const VkRenderPassCreateInfo render_pass_info = {
             .sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
             .attachmentCount = 1,
-            .pAttachments    = &color_attachment,
+            .pAttachments    = &colour_attachment,
             .subpassCount    = 1,
             .pSubpasses      = &subpass,
             .dependencyCount = 1,
@@ -637,8 +663,8 @@ class Application
     {
         // Shader modules
 
-        const auto vert_shader_code = read_bytes("shaders/vert.spv");
-        const auto frag_shader_code = read_bytes("shaders/frag.spv");
+        const auto vert_shader_code = read_bytes("shaders\\vert.spv");
+        const auto frag_shader_code = read_bytes("shaders\\frag.spv");
         const VkShaderModule vert_shader_module =
             create_shader_module(device_, vert_shader_code);
         const VkShaderModule frag_shader_module =
@@ -661,12 +687,16 @@ class Application
 
         // Vertex input
 
+        const auto binding_description = Vertex::get_binding_description();
+        const auto attribute_descriptions =
+            Vertex::get_attribute_descriptions();
         const VkPipelineVertexInputStateCreateInfo vertex_input_info = {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-            .vertexBindingDescriptionCount   = 0,
-            .pVertexBindingDescriptions      = nullptr,
-            .vertexAttributeDescriptionCount = 0,
-            .pVertexAttributeDescriptions    = nullptr,
+            .vertexBindingDescriptionCount = 1,
+            .pVertexBindingDescriptions    = &binding_description,
+            .vertexAttributeDescriptionCount =
+                gsl::narrow_cast<uint32_t>(std::size(attribute_descriptions)),
+            .pVertexAttributeDescriptions = attribute_descriptions.data(),
         };
 
         // Input assembly
@@ -723,19 +753,19 @@ class Application
             .sampleShadingEnable  = VK_FALSE,
         };
 
-        // Color blending
+        // Colour blending
 
-        const VkPipelineColorBlendAttachmentState color_blend_attachment = {
+        const VkPipelineColorBlendAttachmentState colour_blend_attachment = {
             .blendEnable = VK_FALSE,
             .colorWriteMask =
                 VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                 VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
 
-        const VkPipelineColorBlendStateCreateInfo color_blending = {
+        const VkPipelineColorBlendStateCreateInfo colour_blending = {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
             .logicOpEnable   = VK_FALSE,
             .attachmentCount = 1,
-            .pAttachments    = &color_blend_attachment,
+            .pAttachments    = &colour_blend_attachment,
         };
 
         // Create pipeline layout
@@ -760,7 +790,7 @@ class Application
             .pViewportState      = &viewport_state,
             .pRasterizationState = &rasterizer,
             .pMultisampleState   = &multisampling,
-            .pColorBlendState    = &color_blending,
+            .pColorBlendState    = &colour_blending,
             .layout              = pipeline_layout_,
             .renderPass          = render_pass_,
             .subpass             = 0,
@@ -787,13 +817,14 @@ class Application
         {
             const VkImageView attachments[] = {swap_chain_image_views_.at(i)};
             const VkFramebufferCreateInfo framebuffer_info = {
-                .sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-                .renderPass      = render_pass_,
-                .attachmentCount = std::size(attachments),
-                .pAttachments    = &attachments[0],
-                .width           = swap_chain_extent_.width,
-                .height          = swap_chain_extent_.height,
-                .layers          = 1,
+                .sType      = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+                .renderPass = render_pass_,
+                .attachmentCount =
+                    gsl::narrow_cast<uint32_t>(std::size(attachments)),
+                .pAttachments = &attachments[0],
+                .width        = swap_chain_extent_.width,
+                .height       = swap_chain_extent_.height,
+                .layers       = 1,
             };
 
             if (vkCreateFramebuffer(device_, &framebuffer_info, nullptr,
@@ -824,6 +855,55 @@ class Application
         }
 
         log_info("Created command pool");
+    }
+
+    void create_vertex_buffer()
+    {
+        const VkBufferCreateInfo buffer_info = {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size =
+                (sizeof(Vertex) * static_cast<VkDeviceSize>(vertices_.size())),
+            .usage       = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
+
+        if (vkCreateBuffer(device_, &buffer_info, nullptr, &vertex_buffer_) !=
+            VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to create vertex buffer!");
+        }
+
+        VkMemoryRequirements memory_requirements = {};
+        vkGetBufferMemoryRequirements(device_, vertex_buffer_,
+                                      &memory_requirements);
+
+        const auto memory_type = find_memory_type(
+            physical_device_, memory_requirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        const VkMemoryAllocateInfo alloc_info = {
+            .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize  = memory_requirements.size,
+            .memoryTypeIndex = memory_type,
+        };
+
+        if (vkAllocateMemory(device_, &alloc_info, nullptr,
+                             &vertex_buffer_memory_) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to allocate vertex buffer memory!");
+        }
+
+        vkBindBufferMemory(device_, vertex_buffer_, vertex_buffer_memory_, 0);
+
+        void *data = nullptr;
+        vkMapMemory(device_, vertex_buffer_memory_, 0, buffer_info.size, 0,
+                    &data);
+        // Copy vertices_ into data
+        const auto data_span = gsl::make_span(
+            static_cast<Vertex *>(data),
+            gsl::narrow_cast<std::size_t>(buffer_info.size / sizeof(Vertex)));
+        std::copy(vertices_.begin(), vertices_.end(), data_span.begin());
+        vkUnmapMemory(device_, vertex_buffer_memory_);
     }
 
     void create_command_buffers()
@@ -858,7 +938,7 @@ class Application
                     "Failed to begin recording command buffer!");
             }
 
-            const VkClearValue clear_color = {0.0f, 0.0f, 0.0f, 1.0f};
+            const VkClearValue clear_colour = {0.0f, 0.0f, 0.0f, 1.0f};
 
             const VkRenderPassBeginInfo render_pass_info = {
                 .sType       = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -866,7 +946,7 @@ class Application
                 .framebuffer = swap_chain_framebuffers_.at(i),
                 .renderArea  = {.offset = {0, 0}, .extent = swap_chain_extent_},
                 .clearValueCount = 1,
-                .pClearValues    = &clear_color,
+                .pClearValues    = &clear_colour,
             };
 
             vkCmdBeginRenderPass(command_buffers_.at(i), &render_pass_info,
@@ -874,7 +954,11 @@ class Application
             vkCmdBindPipeline(command_buffers_.at(i),
                               VK_PIPELINE_BIND_POINT_GRAPHICS,
                               graphics_pipeline_);
-            vkCmdDraw(command_buffers_.at(i), 3, 1, 0, 0);
+            const VkBuffer vertex_buffers[] = {vertex_buffer_};
+            const VkDeviceSize offsets[]    = {0};
+            vkCmdBindVertexBuffers(command_buffers_.at(i), 0, 1, &vertex_buffers[0], &offsets[0]);
+
+            vkCmdDraw(command_buffers_.at(i), gsl::narrow_cast<uint32_t>(vertices_.size()), 1, 0, 0);
             vkCmdEndRenderPass(command_buffers_.at(i));
             if (vkEndCommandBuffer(command_buffers_.at(i)) != VK_SUCCESS)
             {
@@ -963,14 +1047,16 @@ class Application
             render_finished_semaphores_.at(current_frame_)};
 
         const VkSubmitInfo submit_info = {
-            .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .waitSemaphoreCount   = std::size(wait_semaphores),
-            .pWaitSemaphores      = &wait_semaphores[0],
-            .pWaitDstStageMask    = &wait_stages[0],
-            .commandBufferCount   = 1,
-            .pCommandBuffers      = &command_buffers_.at(image_index),
-            .signalSemaphoreCount = std::size(signal_semaphores),
-            .pSignalSemaphores    = &signal_semaphores[0]};
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .waitSemaphoreCount =
+                gsl::narrow_cast<uint32_t>(std::size(wait_semaphores)),
+            .pWaitSemaphores    = &wait_semaphores[0],
+            .pWaitDstStageMask  = &wait_stages[0],
+            .commandBufferCount = 1,
+            .pCommandBuffers    = &command_buffers_.at(image_index),
+            .signalSemaphoreCount =
+                gsl::narrow_cast<uint32_t>(std::size(signal_semaphores)),
+            .pSignalSemaphores = &signal_semaphores[0]};
 
         vkResetFences(device_, 1, &in_flight_fences_.at(current_frame_));
         if (vkQueueSubmit(graphics_queue_, 1, &submit_info,
@@ -982,12 +1068,14 @@ class Application
         const VkSwapchainKHR swap_chains[] = {swap_chain_};
 
         const VkPresentInfoKHR present_info = {
-            .sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-            .waitSemaphoreCount = std::size(signal_semaphores),
-            .pWaitSemaphores    = &signal_semaphores[0],
-            .swapchainCount     = std::size(swap_chains),
-            .pSwapchains        = &swap_chains[0],
-            .pImageIndices      = &image_index};
+            .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .waitSemaphoreCount =
+                gsl::narrow_cast<uint32_t>(std::size(signal_semaphores)),
+            .pWaitSemaphores = &signal_semaphores[0],
+            .swapchainCount =
+                gsl::narrow_cast<uint32_t>(std::size(swap_chains)),
+            .pSwapchains   = &swap_chains[0],
+            .pImageIndices = &image_index};
 
         vkQueuePresentKHR(present_queue_, &present_info);
 
@@ -996,9 +1084,6 @@ class Application
 
     void cleanup_swap_chain() noexcept
     {
-        // vkWaitSemaphores(device_, )
-        // vkResetFences(device_, 1, &in_flight_fences_.at(current_frame_));
-
         for (auto framebuffer : swap_chain_framebuffers_)
         {
             vkDestroyFramebuffer(device_, framebuffer, nullptr);
@@ -1319,7 +1404,8 @@ class Application
         if (!file.is_open())
         {
             throw std::runtime_error(
-                fmt::format("Failed to open {}!", filename).c_str());
+                fmt::format("Failed to open {}! Reason: Read error.", filename)
+                    .c_str());
         }
         const std::size_t size = static_cast<std::size_t>(file.tellg());
         std::vector<char> buffer(size);
@@ -1349,6 +1435,29 @@ class Application
         auto *app =
             static_cast<Application *>(glfwGetWindowUserPointer(window));
         app->framebuffer_resized_ = true;
+    }
+
+    static uint32_t find_memory_type(VkPhysicalDevice physical_device,
+                                     uint32_t type_filter,
+                                     VkMemoryPropertyFlags properties)
+    {
+        VkPhysicalDeviceMemoryProperties memory_properties = {};
+        vkGetPhysicalDeviceMemoryProperties(physical_device,
+                                            &memory_properties);
+
+        for (uint32_t i = 0; i < memory_properties.memoryTypeCount; ++i)
+        {
+            const bool matches_type_filter = (type_filter & (1 << i)) != 0;
+            const bool matches_properties =
+                (gsl::at(memory_properties.memoryTypes, i).propertyFlags &
+                 properties) == properties;
+            if (matches_type_filter && matches_properties)
+            {
+                return i;
+            }
+        }
+
+        throw std::runtime_error("Failed to find suitable memory type!");
     }
 };
 
