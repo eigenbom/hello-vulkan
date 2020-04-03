@@ -3,14 +3,16 @@
 //
 // Code adapted from vulkan-tutorial.com
 
-#include <fmt/core.h>
 #define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-#define NOMINMAX
 #define GLFW_EXPOSE_NATIVE_WIN32
-#include <GLFW/glfw3native.h>
+#define GLM_FORCE_RADIANS
+#define NOMINMAX
 
+#include <GLFW/glfw3.h>
+#include <GLFW/glfw3native.h>
+#include <fmt/core.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <gsl/gsl>
 
 #include <algorithm>
@@ -28,6 +30,8 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+using glm::vec2, glm::vec3, glm::mat4;
 
 enum class BuildMode
 {
@@ -112,8 +116,8 @@ DestroyDebugUtilsMessengerEXT(VkInstance instance,
 
 struct Vertex
 {
-    glm::vec2 pos;
-    glm::vec3 colour;
+    vec2 pos;
+    vec3 colour;
 
     static constexpr VkVertexInputBindingDescription
     get_binding_description() noexcept
@@ -138,6 +142,13 @@ struct Vertex
              .offset   = offsetof(Vertex, colour)},
         }};
     }
+};
+
+struct UniformBufferObject
+{
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
 };
 
 class Application
@@ -172,6 +183,7 @@ class Application
     std::vector<VkImage> swap_chain_images_              = {};
     std::vector<VkImageView> swap_chain_image_views_     = {};
     VkRenderPass render_pass_                            = VK_NULL_HANDLE;
+    VkDescriptorSetLayout descriptor_set_layout_         = VK_NULL_HANDLE;
     VkPipelineLayout pipeline_layout_                    = VK_NULL_HANDLE;
     VkPipeline graphics_pipeline_                        = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> swap_chain_framebuffers_  = {};
@@ -186,6 +198,10 @@ class Application
     VkDebugUtilsMessengerEXT debug_messenger_            = VK_NULL_HANDLE;
     VkBuffer vertex_buffer_                              = VK_NULL_HANDLE;
     VkDeviceMemory vertex_buffer_memory_                 = VK_NULL_HANDLE;
+    std::vector<VkBuffer> uniform_buffers_               = {};
+    std::vector<VkDeviceMemory> uniform_buffers_memory_  = {};
+    VkDescriptorPool descriptor_pool_                    = {};
+    std::vector<VkDescriptorSet> descriptor_sets_        = {};
 
   public:
     void run()
@@ -231,10 +247,14 @@ class Application
         create_swap_chain();
         create_image_views();
         create_render_pass();
+        create_descriptor_set_layout();
         create_graphics_pipeline();
         create_framebuffers();
         create_command_pool();
         create_vertex_buffer();
+        create_uniform_buffers();
+        create_descriptor_pool();
+        create_descriptor_sets();
         create_command_buffers();
         create_sync_objects();
     }
@@ -269,6 +289,8 @@ class Application
     void cleanup() noexcept
     {
         cleanup_swap_chain();
+        vkDestroyDescriptorSetLayout(device_, descriptor_set_layout_, nullptr);
+        descriptor_set_layout_ = VK_NULL_HANDLE;
         vkDestroyBuffer(device_, vertex_buffer_, nullptr);
         vertex_buffer_ = VK_NULL_HANDLE;
         vkFreeMemory(device_, vertex_buffer_memory_, nullptr);
@@ -318,7 +340,8 @@ class Application
             .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
             .pEngineName        = "No Engine",
             .engineVersion      = VK_MAKE_VERSION(1, 0, 0),
-            .apiVersion         = VK_API_VERSION_1_0};
+            .apiVersion         = VK_API_VERSION_1_0,
+        };
 
         const auto required_extensions = get_required_extensions();
         const auto debug_utils_messenger_info =
@@ -457,12 +480,13 @@ class Application
         constexpr float queue_priorities[] = {1.0f};
         for (const uint32_t family : unique_queue_families)
         {
-            VkDeviceQueueCreateInfo info = {};
-            info.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-            info.queueFamilyIndex = family;
-            info.queueCount =
-                gsl::narrow_cast<uint32_t>(std::size(queue_priorities));
-            info.pQueuePriorities = &queue_priorities[0];
+            const VkDeviceQueueCreateInfo info = {
+                .sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                .queueFamilyIndex = family,
+                .queueCount =
+                    gsl::narrow_cast<uint32_t>(std::size(queue_priorities)),
+                .pQueuePriorities = &queue_priorities[0],
+            };
             queue_create_infos.push_back(info);
         }
 
@@ -590,13 +614,15 @@ class Application
                         .b = VK_COMPONENT_SWIZZLE_IDENTITY,
                         .a = VK_COMPONENT_SWIZZLE_IDENTITY,
                     },
-                .subresourceRange = {
-                    .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
-                    .baseMipLevel   = 0,
-                    .levelCount     = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount     = 1,
-                }};
+                .subresourceRange =
+                    {
+                        .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+                        .baseMipLevel   = 0,
+                        .levelCount     = 1,
+                        .baseArrayLayer = 0,
+                        .layerCount     = 1,
+                    },
+            };
 
             if (vkCreateImageView(device_, &create_info, nullptr,
                                   &swap_chain_image_views_.at(i)) != VK_SUCCESS)
@@ -657,6 +683,29 @@ class Application
         }
 
         log_info("Created render pass");
+    }
+
+    void create_descriptor_set_layout()
+    {
+        const VkDescriptorSetLayoutBinding ubo_layout_binding = {
+            .binding            = 0,
+            .descriptorType     = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorCount    = 1,
+            .stageFlags         = VK_SHADER_STAGE_VERTEX_BIT,
+            .pImmutableSamplers = nullptr,
+        };
+
+        const VkDescriptorSetLayoutCreateInfo layout_info = {
+            .sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = 1,
+            .pBindings    = &ubo_layout_binding,
+        };
+
+        if (vkCreateDescriptorSetLayout(device_, &layout_info, nullptr,
+                                        &descriptor_set_layout_) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create descriptor set layout!");
+        }
     }
 
     void create_graphics_pipeline()
@@ -771,7 +820,10 @@ class Application
         // Create pipeline layout
 
         const VkPipelineLayoutCreateInfo pipeline_layout_info = {
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            .sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .setLayoutCount = 1,
+            .pSetLayouts    = &descriptor_set_layout_,
+        };
 
         if (vkCreatePipelineLayout(device_, &pipeline_layout_info, nullptr,
                                    &pipeline_layout_) != VK_SUCCESS)
@@ -846,7 +898,8 @@ class Application
         const VkCommandPoolCreateInfo pool_info = {
             .sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
             .flags            = 0,
-            .queueFamilyIndex = queue_family_indices.graphics_family.value()};
+            .queueFamilyIndex = queue_family_indices.graphics_family.value(),
+        };
 
         if (vkCreateCommandPool(device_, &pool_info, nullptr, &command_pool_) !=
             VK_SUCCESS)
@@ -859,8 +912,8 @@ class Application
 
     void create_vertex_buffer()
     {
-        const VkDeviceSize buffer_size =
-            (sizeof(Vertex) * static_cast<VkDeviceSize>(vertices_.size()));
+        constexpr VkDeviceSize buffer_size =
+            sizeof(Vertex) * gsl::narrow_cast<VkDeviceSize>(vertices_.size());
 
         const auto [staging_buffer, staging_buffer_memory] =
             create_buffer(physical_device_, device_, buffer_size,
@@ -870,7 +923,7 @@ class Application
 
         void *data = nullptr;
         vkMapMemory(device_, staging_buffer_memory, 0, buffer_size, 0, &data);
-        memcpy(data, vertices_.data(),
+        std::memcpy(data, vertices_.data(),
                gsl::narrow_cast<std::size_t>(buffer_size));
         vkUnmapMemory(device_, staging_buffer_memory);
 
@@ -883,6 +936,86 @@ class Application
         copy_buffer(staging_buffer, vertex_buffer_, buffer_size);
         vkDestroyBuffer(device_, staging_buffer, nullptr);
         vkFreeMemory(device_, staging_buffer_memory, nullptr);
+    }
+
+    void create_uniform_buffers()
+    {
+        constexpr VkDeviceSize buffer_size = sizeof(UniformBufferObject);
+        uniform_buffers_.resize(swap_chain_images_.size());
+        uniform_buffers_memory_.resize(swap_chain_images_.size());
+        for (gsl::index i = 0; i < swap_chain_images_.size(); ++i)
+        {
+            std::tie(uniform_buffers_.at(i), uniform_buffers_memory_.at(i)) =
+                create_buffer(physical_device_, device_, buffer_size,
+                              VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        }
+    }
+
+    void create_descriptor_pool()
+    {
+        const VkDescriptorPoolSize pool_size = {
+            .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorCount =
+                gsl::narrow_cast<uint32_t>(swap_chain_images_.size()),
+        };
+
+        const VkDescriptorPoolCreateInfo pool_info = {
+            .sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .maxSets = gsl::narrow_cast<uint32_t>(swap_chain_images_.size()),
+            .poolSizeCount = 1,
+            .pPoolSizes    = &pool_size,
+        };
+
+
+        if (vkCreateDescriptorPool(device_, &pool_info, nullptr,
+                                   &descriptor_pool_) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create descriptor pool!");
+        }
+    }
+
+    void create_descriptor_sets()
+    {
+        descriptor_sets_.resize(swap_chain_images_.size());
+
+        std::vector<VkDescriptorSetLayout> layouts(swap_chain_images_.size(),
+                                                   descriptor_set_layout_);
+
+        const VkDescriptorSetAllocateInfo alloc_info = {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = descriptor_pool_,
+            .descriptorSetCount = gsl::narrow_cast<uint32_t>(swap_chain_images_.size()),
+            .pSetLayouts = layouts.data()
+        };
+        
+        if (vkAllocateDescriptorSets(device_, &alloc_info,
+                                      descriptor_sets_.data()) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to allocate descriptor sets!");
+        }
+
+        for (gsl::index i = 0; i < std::ssize(swap_chain_images_); ++i)
+        {
+            const VkDescriptorBufferInfo buffer_info = {
+                .buffer = uniform_buffers_.at(i),
+                .offset = 0,
+                .range  = sizeof(UniformBufferObject),
+            };
+
+            const VkWriteDescriptorSet descriptor_write = {
+                .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet          = descriptor_sets_.at(i),
+                .dstBinding      = 0,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .pBufferInfo     = &buffer_info,
+            };
+
+            vkUpdateDescriptorSets(device_, 1, &descriptor_write, 0, nullptr);
+        }
     }
 
     void create_command_buffers()
@@ -908,7 +1041,8 @@ class Application
         for (gsl::index i = 0; i < std::ssize(command_buffers_); ++i)
         {
             const VkCommandBufferBeginInfo begin_info = {
-                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            };
 
             if (vkBeginCommandBuffer(command_buffers_.at(i), &begin_info) !=
                 VK_SUCCESS)
@@ -938,6 +1072,10 @@ class Application
             vkCmdBindVertexBuffers(command_buffers_.at(i), 0, 1,
                                    &vertex_buffers[0], &offsets[0]);
 
+            vkCmdBindDescriptorSets(
+                command_buffers_.at(i), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                pipeline_layout_, 0, 1, &descriptor_sets_[i], 0, nullptr);
+
             vkCmdDraw(command_buffers_.at(i),
                       gsl::narrow_cast<uint32_t>(vertices_.size()), 1, 0, 0);
             vkCmdEndRenderPass(command_buffers_.at(i));
@@ -958,10 +1096,12 @@ class Application
         images_in_flight_.resize(swap_chain_images_.size(), VK_NULL_HANDLE);
 
         const VkSemaphoreCreateInfo semaphore_info = {
-            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        };
         const VkFenceCreateInfo fence_info = {
             .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-            .flags = VK_FENCE_CREATE_SIGNALED_BIT};
+            .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+        };
 
         for (gsl::index i = 0; i < max_frames_in_flight_; ++i)
         {
@@ -1021,11 +1161,16 @@ class Application
             in_flight_fences_.at(current_frame_);
 
         const VkSemaphore wait_semaphores[] = {
-            image_available_semaphores_.at(current_frame_)};
+            image_available_semaphores_.at(current_frame_),
+        };
         const VkPipelineStageFlags wait_stages[] = {
-            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        };
         const VkSemaphore signal_semaphores[] = {
-            render_finished_semaphores_.at(current_frame_)};
+            render_finished_semaphores_.at(current_frame_),
+        };
+
+        update_uniform_buffer(image_index);
 
         const VkSubmitInfo submit_info = {
             .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -1037,7 +1182,8 @@ class Application
             .pCommandBuffers    = &command_buffers_.at(image_index),
             .signalSemaphoreCount =
                 gsl::narrow_cast<uint32_t>(std::size(signal_semaphores)),
-            .pSignalSemaphores = &signal_semaphores[0]};
+            .pSignalSemaphores = &signal_semaphores[0],
+        };
 
         vkResetFences(device_, 1, &in_flight_fences_.at(current_frame_));
         if (vkQueueSubmit(graphics_queue_, 1, &submit_info,
@@ -1046,7 +1192,9 @@ class Application
             throw std::runtime_error("Failed to submit draw command buffer!");
         }
 
-        const VkSwapchainKHR swap_chains[] = {swap_chain_};
+        const VkSwapchainKHR swap_chains[] = {
+            swap_chain_,
+        };
 
         const VkPresentInfoKHR present_info = {
             .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
@@ -1056,7 +1204,8 @@ class Application
             .swapchainCount =
                 gsl::narrow_cast<uint32_t>(std::size(swap_chains)),
             .pSwapchains   = &swap_chains[0],
-            .pImageIndices = &image_index};
+            .pImageIndices = &image_index,
+        };
 
         vkQueuePresentKHR(present_queue_, &present_info);
 
@@ -1070,6 +1219,18 @@ class Application
             vkDestroyFramebuffer(device_, framebuffer, nullptr);
         }
         swap_chain_framebuffers_.clear();
+        for (auto buffer : uniform_buffers_)
+        {
+            vkDestroyBuffer(device_, buffer, nullptr);
+        }
+        uniform_buffers_.clear();
+        for (auto buffer : uniform_buffers_memory_)
+        {
+            vkFreeMemory(device_, buffer, nullptr);
+        }
+        uniform_buffers_memory_.clear();
+        vkDestroyDescriptorPool(device_, descriptor_pool_, nullptr);
+        descriptor_pool_ = VK_NULL_HANDLE;
         vkFreeCommandBuffers(
             device_, command_pool_,
             gsl::narrow_cast<uint32_t>(command_buffers_.size()),
@@ -1106,7 +1267,8 @@ class Application
         {
             vkDestroySemaphore(device_, semaphore, nullptr);
             const VkSemaphoreCreateInfo semaphore_info = {
-                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            };
             if (vkCreateSemaphore(device_, &semaphore_info, nullptr,
                                   &semaphore) != VK_SUCCESS)
             {
@@ -1121,6 +1283,9 @@ class Application
         create_render_pass();
         create_graphics_pipeline();
         create_framebuffers();
+        create_uniform_buffers();
+        create_descriptor_pool();
+        create_descriptor_sets();
         create_command_buffers();
 
         log_info("Recreated swap chain");
@@ -1451,7 +1616,8 @@ class Application
             .sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .size        = size,
             .usage       = usage,
-            .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        };
 
         VkBuffer buffer;
         if (vkCreateBuffer(device, &buffer_info, nullptr, &buffer) !=
@@ -1485,7 +1651,7 @@ class Application
     }
 
     void copy_buffer(VkBuffer src_buffer, VkBuffer dst_buffer,
-                     VkDeviceSize size)
+                     VkDeviceSize size) noexcept
     {
         const VkCommandBufferAllocateInfo alloc_info = {
             .sType       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -1499,7 +1665,8 @@ class Application
 
         const VkCommandBufferBeginInfo begin_info = {
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        };
 
         vkBeginCommandBuffer(command_buffer, &begin_info);
 
@@ -1508,14 +1675,40 @@ class Application
                         &copy_region);
         vkEndCommandBuffer(command_buffer);
 
-        const VkSubmitInfo submit_info = {.sType =
-                                              VK_STRUCTURE_TYPE_SUBMIT_INFO,
-                                          .commandBufferCount = 1,
-                                          .pCommandBuffers = &command_buffer};
+        const VkSubmitInfo submit_info = {
+            .sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1,
+            .pCommandBuffers    = &command_buffer,
+        };
         vkQueueSubmit(graphics_queue_, 1, &submit_info, VK_NULL_HANDLE);
         vkQueueWaitIdle(graphics_queue_);
 
         vkFreeCommandBuffers(device_, command_pool_, 1, &command_buffer);
+    }
+
+    void update_uniform_buffer(uint32_t current_image)
+    {
+        const float time = []() {
+            static const auto start_time =
+                std::chrono::high_resolution_clock::now();
+            const auto current_time = std::chrono::high_resolution_clock::now();
+            return std::chrono::duration<float, std::chrono::seconds::period>(
+                       current_time - start_time)
+                .count();
+        }();
+
+        UniformBufferObject ubo = {
+            .model = glm::rotate(mat4(1.0f), time * glm::radians(90.0f),
+                                 vec3(0.0f, 0.0f, 1.0f)),
+            .view  = glm::identity<mat4>(),
+            .proj  = glm::identity<mat4>(),
+        };
+
+        void* data = nullptr;
+        vkMapMemory(device_, uniform_buffers_memory_.at(current_image), 0,
+                    sizeof(ubo), 0, &data);
+        std::memcpy(data, &ubo, sizeof(ubo));
+        vkUnmapMemory(device_, uniform_buffers_memory_.at(current_image));
     }
 };
 
