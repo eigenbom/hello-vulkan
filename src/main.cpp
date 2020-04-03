@@ -25,6 +25,7 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <numbers>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -155,7 +156,7 @@ class Application
 {
   private:
     static constexpr int initial_width_        = 800;
-    static constexpr int initial_height_       = 600;
+    static constexpr int initial_height_       = 800;
     static constexpr int max_frames_in_flight_ = 2;
     static constexpr bool enable_validation_layers_ =
         (gBuildConfig.mode == BuildMode::Debug);
@@ -164,10 +165,12 @@ class Application
     static constexpr std::array<const char *, 1> device_extensions_ = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
-    static constexpr std::array<Vertex, 3> vertices_ = {{
-        {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-        {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-        {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+    static inline float theta =
+        2.0f * std::numbers::pi_v<float> / 3.0f;
+    static inline std::array<Vertex, 3> vertices_ = {{
+        { vec2(std::cos(0), std::sin(0)), {1.0f, 0.0f, 0.0f}},
+        {vec2(std::cos(theta), std::sin(theta)), {0.0f, 1.0f, 0.0f}},
+        {vec2(std::cos(2 * theta), std::sin(2 * theta)), {0.0f, 0.0f, 1.0f}},
     }};
 
     GLFWwindow *window_                                  = nullptr;
