@@ -24,8 +24,8 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
-#include <optional>
 #include <numbers>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -165,12 +165,10 @@ class Application
     static constexpr std::array<const char *, 1> device_extensions_ = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
-    static inline float theta =
-        2.0f * std::numbers::pi_v<float> / 3.0f;
-    static inline std::array<Vertex, 3> vertices_ = {{
-        { vec2(std::cos(0), std::sin(0)), {1.0f, 0.0f, 0.0f}},
-        {vec2(std::cos(theta), std::sin(theta)), {0.0f, 1.0f, 0.0f}},
-        {vec2(std::cos(2 * theta), std::sin(2 * theta)), {0.0f, 0.0f, 1.0f}},
+    static constexpr std::array<Vertex, 3> vertices_ = {{
+        {{1.0f, 0.0f}, {1.0f, 0.0f, 0.0f}},
+        {{-0.5f, 0.86f}, {0.0f, 1.0f, 0.0f}},
+        {{-0.5f, -0.86f}, {0.0f, 0.0f, 1.0f}},
     }};
 
     GLFWwindow *window_                                  = nullptr;
@@ -927,7 +925,7 @@ class Application
         void *data = nullptr;
         vkMapMemory(device_, staging_buffer_memory, 0, buffer_size, 0, &data);
         std::memcpy(data, vertices_.data(),
-               gsl::narrow_cast<std::size_t>(buffer_size));
+                    gsl::narrow_cast<std::size_t>(buffer_size));
         vkUnmapMemory(device_, staging_buffer_memory);
 
         std::tie(vertex_buffer_, vertex_buffer_memory_) =
@@ -965,12 +963,11 @@ class Application
         };
 
         const VkDescriptorPoolCreateInfo pool_info = {
-            .sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .sType   = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
             .maxSets = gsl::narrow_cast<uint32_t>(swap_chain_images_.size()),
             .poolSizeCount = 1,
             .pPoolSizes    = &pool_size,
         };
-
 
         if (vkCreateDescriptorPool(device_, &pool_info, nullptr,
                                    &descriptor_pool_) != VK_SUCCESS)
@@ -987,14 +984,14 @@ class Application
                                                    descriptor_set_layout_);
 
         const VkDescriptorSetAllocateInfo alloc_info = {
-            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .sType          = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
             .descriptorPool = descriptor_pool_,
-            .descriptorSetCount = gsl::narrow_cast<uint32_t>(swap_chain_images_.size()),
-            .pSetLayouts = layouts.data()
-        };
-        
+            .descriptorSetCount =
+                gsl::narrow_cast<uint32_t>(swap_chain_images_.size()),
+            .pSetLayouts = layouts.data()};
+
         if (vkAllocateDescriptorSets(device_, &alloc_info,
-                                      descriptor_sets_.data()) != VK_SUCCESS)
+                                     descriptor_sets_.data()) != VK_SUCCESS)
         {
             throw std::runtime_error("Failed to allocate descriptor sets!");
         }
@@ -1691,7 +1688,7 @@ class Application
 
     void update_uniform_buffer(uint32_t current_image)
     {
-        const float time = []() {
+        const float time = []() noexcept {
             static const auto start_time =
                 std::chrono::high_resolution_clock::now();
             const auto current_time = std::chrono::high_resolution_clock::now();
@@ -1700,14 +1697,14 @@ class Application
                 .count();
         }();
 
-        UniformBufferObject ubo = {
-            .model = glm::rotate(mat4(1.0f), time * glm::radians(90.0f),
+        const UniformBufferObject ubo = {
+            .model = glm::rotate(mat4(1.0f), 2 * time * glm::radians(360.0f),
                                  vec3(0.0f, 0.0f, 1.0f)),
             .view  = glm::identity<mat4>(),
             .proj  = glm::identity<mat4>(),
         };
 
-        void* data = nullptr;
+        void *data = nullptr;
         vkMapMemory(device_, uniform_buffers_memory_.at(current_image), 0,
                     sizeof(ubo), 0, &data);
         std::memcpy(data, &ubo, sizeof(ubo));
