@@ -856,30 +856,33 @@ class Application
 
         log_info("Created command pool");
     }
-        
+
     void create_vertex_buffer()
     {
         const VkDeviceSize buffer_size =
             (sizeof(Vertex) * static_cast<VkDeviceSize>(vertices_.size()));
 
-        std::tie(vertex_buffer_, vertex_buffer_memory_) = create_buffer(physical_device_, device_, buffer_size,
-                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        const auto [staging_buffer, staging_buffer_memory] =
+            create_buffer(physical_device_, device_, buffer_size,
+                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
         void *data = nullptr;
-        vkMapMemory(device_, vertex_buffer_memory_, 0, buffer_size, 0, &data);
-        memcpy(data, vertices_.data(), gsl::narrow_cast<std::size_t>(buffer_size));
+        vkMapMemory(device_, staging_buffer_memory, 0, buffer_size, 0, &data);
+        memcpy(data, vertices_.data(),
+               gsl::narrow_cast<std::size_t>(buffer_size));
+        vkUnmapMemory(device_, staging_buffer_memory);
 
-        /*
-        // Copy vertices_ into data
-        const auto data_span = gsl::make_span(
-            static_cast<Vertex *>(data),
-            gsl::narrow_cast<std::size_t>(buffer_size / sizeof(Vertex)));
-        std::copy(vertices_.begin(), vertices_.end(), data_span.begin());
-        */
+        std::tie(vertex_buffer_, vertex_buffer_memory_) =
+            create_buffer(physical_device_, device_, buffer_size,
+                          VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-        vkUnmapMemory(device_, vertex_buffer_memory_);
+        copy_buffer(staging_buffer, vertex_buffer_, buffer_size);
+        vkDestroyBuffer(device_, staging_buffer, nullptr);
+        vkFreeMemory(device_, staging_buffer_memory, nullptr);
     }
 
     void create_command_buffers()
@@ -932,9 +935,11 @@ class Application
                               graphics_pipeline_);
             const VkBuffer vertex_buffers[] = {vertex_buffer_};
             const VkDeviceSize offsets[]    = {0};
-            vkCmdBindVertexBuffers(command_buffers_.at(i), 0, 1, &vertex_buffers[0], &offsets[0]);
+            vkCmdBindVertexBuffers(command_buffers_.at(i), 0, 1,
+                                   &vertex_buffers[0], &offsets[0]);
 
-            vkCmdDraw(command_buffers_.at(i), gsl::narrow_cast<uint32_t>(vertices_.size()), 1, 0, 0);
+            vkCmdDraw(command_buffers_.at(i),
+                      gsl::narrow_cast<uint32_t>(vertices_.size()), 1, 0, 0);
             vkCmdEndRenderPass(command_buffers_.at(i));
             if (vkEndCommandBuffer(command_buffers_.at(i)) != VK_SUCCESS)
             {
@@ -1421,14 +1426,14 @@ class Application
         vkGetPhysicalDeviceMemoryProperties(physical_device,
                                             &memory_properties);
 
-        [[gsl::suppress(bounds.2)]]
-        [[gsl::suppress(bounds.4)]]
-        for (uint32_t i = 0; i < memory_properties.memoryTypeCount; ++i)
+        [[gsl::suppress(bounds .2)]] [[gsl::suppress(
+            bounds .4)]] for (uint32_t i = 0;
+                              i < memory_properties.memoryTypeCount; ++i)
         {
             const bool matches_type_filter = (type_filter & (1 << i)) != 0;
             const bool matches_properties =
-                (memory_properties.memoryTypes[i].propertyFlags &
-                 properties) == properties;
+                (memory_properties.memoryTypes[i].propertyFlags & properties) ==
+                properties;
             if (matches_type_filter && matches_properties)
             {
                 return i;
@@ -1438,9 +1443,9 @@ class Application
         throw std::runtime_error("Failed to find suitable memory type!");
     }
 
-    static std::pair<VkBuffer, VkDeviceMemory> create_buffer(VkPhysicalDevice physical_device, VkDevice device,
-                              VkDeviceSize size, VkBufferUsageFlags usage,
-                              VkMemoryPropertyFlags properties)
+    static std::pair<VkBuffer, VkDeviceMemory> create_buffer(
+        VkPhysicalDevice physical_device, VkDevice device, VkDeviceSize size,
+        VkBufferUsageFlags usage, VkMemoryPropertyFlags properties)
     {
         const VkBufferCreateInfo buffer_info = {
             .sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -1477,6 +1482,40 @@ class Application
         vkBindBufferMemory(device, buffer, buffer_memory, 0);
 
         return {buffer, buffer_memory};
+    }
+
+    void copy_buffer(VkBuffer src_buffer, VkBuffer dst_buffer,
+                     VkDeviceSize size)
+    {
+        const VkCommandBufferAllocateInfo alloc_info = {
+            .sType       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = command_pool_,
+            .level       = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+
+        VkCommandBuffer command_buffer = {};
+        vkAllocateCommandBuffers(device_, &alloc_info, &command_buffer);
+
+        const VkCommandBufferBeginInfo begin_info = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+
+        vkBeginCommandBuffer(command_buffer, &begin_info);
+
+        const VkBufferCopy copy_region = {.size = size};
+        vkCmdCopyBuffer(command_buffer, src_buffer, dst_buffer, 1,
+                        &copy_region);
+        vkEndCommandBuffer(command_buffer);
+
+        const VkSubmitInfo submit_info = {.sType =
+                                              VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                                          .commandBufferCount = 1,
+                                          .pCommandBuffers = &command_buffer};
+        vkQueueSubmit(graphics_queue_, 1, &submit_info, VK_NULL_HANDLE);
+        vkQueueWaitIdle(graphics_queue_);
+
+        vkFreeCommandBuffers(device_, command_pool_, 1, &command_buffer);
     }
 };
 
