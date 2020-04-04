@@ -1697,11 +1697,15 @@ class Application
                 .count();
         }();
 
+        const float aspect_ratio =
+            gsl::narrow_cast<float>(swap_chain_extent_.width) /
+            swap_chain_extent_.height;
         const UniformBufferObject ubo = {
-            .model = glm::rotate(mat4(1.0f), 2 * time * glm::radians(360.0f),
+            .model = glm::rotate(mat4(1.0f), time * glm::radians(45.0f),
                                  vec3(0.0f, 0.0f, 1.0f)),
             .view  = glm::identity<mat4>(),
-            .proj  = glm::identity<mat4>(),
+            .proj = glm::ortho(-aspect_ratio, aspect_ratio, -1.0f,
+                               1.0f)
         };
 
         void *data = nullptr;
