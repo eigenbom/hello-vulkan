@@ -203,6 +203,10 @@ class Application
     std::vector<VkDeviceMemory> uniform_buffers_memory_  = {};
     VkDescriptorPool descriptor_pool_                    = {};
     std::vector<VkDescriptorSet> descriptor_sets_        = {};
+    VkSampleCountFlagBits msaa_samples_ = VK_SAMPLE_COUNT_1_BIT;
+    VkImage colour_image_               = VK_NULL_HANDLE;
+    VkDeviceMemory colour_image_memory_ = VK_NULL_HANDLE;
+    VkImageView colour_image_view_      = VK_NULL_HANDLE;
 
   public:
     void run()
@@ -250,6 +254,7 @@ class Application
         create_render_pass();
         create_descriptor_set_layout();
         create_graphics_pipeline();
+        create_colour_resources();
         create_framebuffers();
         create_command_pool();
         create_vertex_buffer();
@@ -462,8 +467,9 @@ class Application
         }
 
         physical_device_ = devices.at(0);
+        msaa_samples_    = get_max_usable_sample_count(physical_device_);
 
-        log_info("Selected physical device");
+        log_info("Selected physical device with {} bit multisampling", static_cast<uint32_t>(msaa_samples_));
     }
 
     void create_logical_device()
@@ -639,13 +645,13 @@ class Application
     {
         const VkAttachmentDescription colour_attachment = {
             .format         = swap_chain_image_format_,
-            .samples        = VK_SAMPLE_COUNT_1_BIT,
+            .samples        = msaa_samples_,
             .loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR,
             .storeOp        = VK_ATTACHMENT_STORE_OP_STORE,
             .stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
             .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
             .initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED,
-            .finalLayout    = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            .finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         };
 
         const VkAttachmentReference colour_attachment_ref = {
@@ -653,10 +659,27 @@ class Application
             .layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         };
 
+        const VkAttachmentDescription colour_attachment_resolve = {
+            .format         = swap_chain_image_format_,
+            .samples        = VK_SAMPLE_COUNT_1_BIT,
+            .loadOp         = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .storeOp        = VK_ATTACHMENT_STORE_OP_STORE,
+            .stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout    = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        };
+
+        const VkAttachmentReference colour_attachment_resolve_ref = {
+            .attachment = 1,
+            .layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        };
+
         const VkSubpassDescription subpass = {
             .pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS,
             .colorAttachmentCount = 1,
             .pColorAttachments    = &colour_attachment_ref,
+            .pResolveAttachments  = &colour_attachment_resolve_ref,
         };
 
         const VkSubpassDependency dependency = {
@@ -667,10 +690,13 @@ class Application
             .srcAccessMask = 0,
             .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT};
 
+        const std::array<VkAttachmentDescription, 2> attachments = {
+            colour_attachment, colour_attachment_resolve};
+
         const VkRenderPassCreateInfo render_pass_info = {
             .sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-            .attachmentCount = 1,
-            .pAttachments    = &colour_attachment,
+            .attachmentCount = gsl::narrow_cast<uint32_t>(attachments.size()),
+            .pAttachments    = attachments.data(),
             .subpassCount    = 1,
             .pSubpasses      = &subpass,
             .dependencyCount = 1,
@@ -799,7 +825,7 @@ class Application
 
         const VkPipelineMultisampleStateCreateInfo multisampling = {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-            .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+            .rasterizationSamples = msaa_samples_,
             .sampleShadingEnable  = VK_FALSE,
         };
 
@@ -863,18 +889,36 @@ class Application
         log_info("Created graphics pipeline");
     }
 
+    void create_colour_resources()
+    {
+        const VkFormat colour_format = swap_chain_image_format_;
+        std::tie(colour_image_, colour_image_memory_) =
+            create_image(physical_device_, device_, swap_chain_extent_.width,
+                         swap_chain_extent_.height, msaa_samples_,
+                         colour_format, VK_IMAGE_TILING_OPTIMAL,
+                         VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT |
+                             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        colour_image_view_ =
+            create_image_view(device_, colour_image_, colour_format,
+                              VK_IMAGE_ASPECT_COLOR_BIT, 1);
+    }
+
     void create_framebuffers()
     {
         swap_chain_framebuffers_.resize(swap_chain_image_views_.size());
         for (gsl::index i = 0; i < std::ssize(swap_chain_image_views_); ++i)
         {
-            const VkImageView attachments[] = {swap_chain_image_views_.at(i)};
+            const std::array<VkImageView, 2> attachments = {
+                colour_image_view_,
+                swap_chain_image_views_.at(i),
+            };
             const VkFramebufferCreateInfo framebuffer_info = {
                 .sType      = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
                 .renderPass = render_pass_,
                 .attachmentCount =
-                    gsl::narrow_cast<uint32_t>(std::size(attachments)),
-                .pAttachments = &attachments[0],
+                    gsl::narrow_cast<uint32_t>(attachments.size()),
+                .pAttachments = attachments.data(),
                 .width        = swap_chain_extent_.width,
                 .height       = swap_chain_extent_.height,
                 .layers       = 1,
@@ -944,7 +988,7 @@ class Application
         constexpr VkDeviceSize buffer_size = sizeof(UniformBufferObject);
         uniform_buffers_.resize(swap_chain_images_.size());
         uniform_buffers_memory_.resize(swap_chain_images_.size());
-        for (gsl::index i = 0; i < swap_chain_images_.size(); ++i)
+        for (gsl::index i = 0; i < std::ssize(swap_chain_images_); ++i)
         {
             std::tie(uniform_buffers_.at(i), uniform_buffers_memory_.at(i)) =
                 create_buffer(physical_device_, device_, buffer_size,
@@ -1214,6 +1258,10 @@ class Application
 
     void cleanup_swap_chain() noexcept
     {
+        vkDestroyImageView(device_, colour_image_view_, nullptr);
+        vkDestroyImage(device_, colour_image_, nullptr);
+        vkFreeMemory(device_, colour_image_memory_, nullptr);
+
         for (auto framebuffer : swap_chain_framebuffers_)
         {
             vkDestroyFramebuffer(device_, framebuffer, nullptr);
@@ -1282,6 +1330,7 @@ class Application
         create_image_views();
         create_render_pass();
         create_graphics_pipeline();
+        create_colour_resources();
         create_framebuffers();
         create_uniform_buffers();
         create_descriptor_pool();
@@ -1704,15 +1753,113 @@ class Application
             .model = glm::rotate(mat4(1.0f), time * glm::radians(45.0f),
                                  vec3(0.0f, 0.0f, 1.0f)),
             .view  = glm::identity<mat4>(),
-            .proj = glm::ortho(-aspect_ratio, aspect_ratio, -1.0f,
-                               1.0f)
-        };
+            .proj  = glm::ortho(-aspect_ratio, aspect_ratio, -1.0f, 1.0f)};
 
         void *data = nullptr;
         vkMapMemory(device_, uniform_buffers_memory_.at(current_image), 0,
                     sizeof(ubo), 0, &data);
         std::memcpy(data, &ubo, sizeof(ubo));
         vkUnmapMemory(device_, uniform_buffers_memory_.at(current_image));
+    }
+
+    static VkSampleCountFlagBits get_max_usable_sample_count(
+        VkPhysicalDevice physical_device) noexcept
+    {
+        VkPhysicalDeviceProperties properties = {};
+        vkGetPhysicalDeviceProperties(physical_device, &properties);
+        const VkSampleCountFlags counts =
+            properties.limits.framebufferColorSampleCounts &
+            properties.limits.framebufferDepthSampleCounts;
+        const VkSampleCountFlagBits preferred_bits[] = {
+            VK_SAMPLE_COUNT_64_BIT, VK_SAMPLE_COUNT_32_BIT,
+            VK_SAMPLE_COUNT_16_BIT, VK_SAMPLE_COUNT_8_BIT,
+            VK_SAMPLE_COUNT_4_BIT,  VK_SAMPLE_COUNT_2_BIT,
+        };
+        for (const auto preferred_bit : preferred_bits)
+        {
+            if (counts & preferred_bit)
+            {
+                return preferred_bit;
+            }
+        }
+
+        return VK_SAMPLE_COUNT_1_BIT;
+    }
+
+    static std::pair<VkImage, VkDeviceMemory> create_image(
+        VkPhysicalDevice physical_device, VkDevice device, uint32_t width,
+        uint32_t height, VkSampleCountFlagBits num_samples, VkFormat format,
+        VkImageTiling tiling, VkImageUsageFlags usage,
+        VkMemoryPropertyFlags properties)
+    {
+        VkImage image               = VK_NULL_HANDLE;
+        VkDeviceMemory image_memory = VK_NULL_HANDLE;
+
+        const VkImageCreateInfo image_info = {
+            .sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType     = VK_IMAGE_TYPE_2D,
+            .format        = format,
+            .extent        = {.width = width, .height = height, .depth = 1},
+            .mipLevels     = 1,
+            .arrayLayers   = 1,
+            .samples       = num_samples,
+            .tiling        = tiling,
+            .usage         = usage,
+            .sharingMode   = VK_SHARING_MODE_EXCLUSIVE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        };
+
+        if (vkCreateImage(device, &image_info, nullptr, &image) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create image!");
+        }
+
+        VkMemoryRequirements requirements;
+        vkGetImageMemoryRequirements(device, image, &requirements);
+
+        const VkMemoryAllocateInfo alloc_info = {
+            .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize  = requirements.size,
+            .memoryTypeIndex = find_memory_type(
+                physical_device, requirements.memoryTypeBits, properties)};
+
+        if (vkAllocateMemory(device, &alloc_info, nullptr, &image_memory) !=
+            VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to allocate image memory!");
+        }
+
+        vkBindImageMemory(device, image, image_memory, 0);
+
+        return {image, image_memory};
+    }
+
+    static VkImageView create_image_view(VkDevice device, VkImage image,
+                                         VkFormat format,
+                                         VkImageAspectFlags aspect_flags,
+                                         uint32_t mip_levels)
+    {
+        const VkImageViewCreateInfo view_info = {
+            .sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image            = image,
+            .viewType         = VK_IMAGE_VIEW_TYPE_2D,
+            .format           = format,
+            .subresourceRange = {
+                .aspectMask     = aspect_flags,
+                .baseMipLevel   = 0,
+                .levelCount     = mip_levels,
+                .baseArrayLayer = 0,
+                .layerCount     = 1,
+            }};
+
+        VkImageView image_view = VK_NULL_HANDLE;
+        if (vkCreateImageView(device, &view_info, nullptr, &image_view) !=
+            VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create texture image view!");
+        }
+
+        return image_view;
     }
 };
 
