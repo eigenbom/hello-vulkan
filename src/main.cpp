@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -171,6 +172,12 @@ class Application
         {{-0.5f, -0.86f}, {0.0f, 0.0f, 1.0f}},
     }};
 
+    static constexpr std::array<uint16_t, 3> indices_ = {{
+        0,
+        1,
+        2,
+    }};
+
     GLFWwindow *window_                                  = nullptr;
     VkInstance instance_                                 = nullptr;
     VkPhysicalDevice physical_device_                    = nullptr;
@@ -199,6 +206,8 @@ class Application
     VkDebugUtilsMessengerEXT debug_messenger_            = VK_NULL_HANDLE;
     VkBuffer vertex_buffer_                              = VK_NULL_HANDLE;
     VkDeviceMemory vertex_buffer_memory_                 = VK_NULL_HANDLE;
+    VkBuffer index_buffer_                               = VK_NULL_HANDLE;
+    VkDeviceMemory index_buffer_memory_                  = VK_NULL_HANDLE;
     std::vector<VkBuffer> uniform_buffers_               = {};
     std::vector<VkDeviceMemory> uniform_buffers_memory_  = {};
     VkDescriptorPool descriptor_pool_                    = {};
@@ -258,6 +267,7 @@ class Application
         create_framebuffers();
         create_command_pool();
         create_vertex_buffer();
+        create_index_buffer();
         create_uniform_buffers();
         create_descriptor_pool();
         create_descriptor_sets();
@@ -297,6 +307,10 @@ class Application
         cleanup_swap_chain();
         vkDestroyDescriptorSetLayout(device_, descriptor_set_layout_, nullptr);
         descriptor_set_layout_ = VK_NULL_HANDLE;
+        vkDestroyBuffer(device_, index_buffer_, nullptr);
+        index_buffer_ = VK_NULL_HANDLE;
+        vkFreeMemory(device_, index_buffer_memory_, nullptr);
+        index_buffer_memory_ = VK_NULL_HANDLE;
         vkDestroyBuffer(device_, vertex_buffer_, nullptr);
         vertex_buffer_ = VK_NULL_HANDLE;
         vkFreeMemory(device_, vertex_buffer_memory_, nullptr);
@@ -469,7 +483,8 @@ class Application
         physical_device_ = devices.at(0);
         msaa_samples_    = get_max_usable_sample_count(physical_device_);
 
-        log_info("Selected physical device with {} bit multisampling", static_cast<uint32_t>(msaa_samples_));
+        log_info("Selected physical device with {} bit multisampling",
+                 static_cast<uint32_t>(msaa_samples_));
     }
 
     void create_logical_device()
@@ -983,6 +998,35 @@ class Application
         vkFreeMemory(device_, staging_buffer_memory, nullptr);
     }
 
+    void create_index_buffer()
+    {
+        const VkDeviceSize buffer_size =
+            sizeof(indices_[0]) *
+            gsl::narrow_cast<VkDeviceSize>(indices_.size());
+
+        const auto [staging_buffer, staging_buffer_memory] =
+            create_buffer(physical_device_, device_, buffer_size,
+                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+        void *data = nullptr;
+        vkMapMemory(device_, staging_buffer_memory, 0, buffer_size, 0, &data);
+        std::memcpy(data, indices_.data(),
+                    gsl::narrow_cast<std::size_t>(buffer_size));
+        vkUnmapMemory(device_, staging_buffer_memory);
+
+        std::tie(index_buffer_, index_buffer_memory_) = create_buffer(
+            physical_device_, device_, buffer_size,
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        copy_buffer(staging_buffer, index_buffer_, buffer_size);
+
+        vkDestroyBuffer(device_, staging_buffer, nullptr);
+        vkFreeMemory(device_, staging_buffer_memory, nullptr);
+    }
+
     void create_uniform_buffers()
     {
         constexpr VkDeviceSize buffer_size = sizeof(UniformBufferObject);
@@ -1095,7 +1139,7 @@ class Application
                     "Failed to begin recording command buffer!");
             }
 
-            const VkClearValue clear_colour = {0.0f, 0.0f, 0.0f, 1.0f};
+            const VkClearValue clear_colour = {1.0f, 1.0f, 1.0f, 1.0f};
 
             const VkRenderPassBeginInfo render_pass_info = {
                 .sType       = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -1115,13 +1159,16 @@ class Application
             const VkDeviceSize offsets[]    = {0};
             vkCmdBindVertexBuffers(command_buffers_.at(i), 0, 1,
                                    &vertex_buffers[0], &offsets[0]);
+            vkCmdBindIndexBuffer(command_buffers_.at(i), index_buffer_, 0,
+                                 VK_INDEX_TYPE_UINT16);
 
             vkCmdBindDescriptorSets(
                 command_buffers_.at(i), VK_PIPELINE_BIND_POINT_GRAPHICS,
-                pipeline_layout_, 0, 1, &descriptor_sets_[i], 0, nullptr);
+                pipeline_layout_, 0, 1, &descriptor_sets_.at(i), 0, nullptr);
 
-            vkCmdDraw(command_buffers_.at(i),
-                      gsl::narrow_cast<uint32_t>(vertices_.size()), 1, 0, 0);
+            vkCmdDrawIndexed(command_buffers_.at(i),
+                             gsl::narrow_cast<uint32_t>(indices_.size()), 1, 0,
+                             0, 0);
             vkCmdEndRenderPass(command_buffers_.at(i));
             if (vkEndCommandBuffer(command_buffers_.at(i)) != VK_SUCCESS)
             {
@@ -1749,11 +1796,54 @@ class Application
         const float aspect_ratio =
             gsl::narrow_cast<float>(swap_chain_extent_.width) /
             swap_chain_extent_.height;
+
+        const auto test_turn = [](float p) -> float {
+            if (p < 0.5f)
+            {
+                return 4 * p * p * p;
+            }
+            else
+            {
+                const float f = ((2.0f * p) - 2.0f);
+                return 0.5f * f * f * f + 1;
+            }
+        };
+
+        const auto elastic_turn = [](float p) -> float {
+            if (p < 0.5)
+            {
+                float f = 2 * p;
+                return 0.5 * (f * f * f - f * sin(f * std::numbers::pi_v<float>));
+            }
+            else
+            {
+                float f = (1 - (2 * p - 1));
+                return 0.5 * (1 - (f * f * f -
+                                   f * sin(f * std::numbers::pi_v<float>))) +
+                       0.5;
+            }
+        };
+
+        constexpr float parts = 6.0f;
+        constexpr float speed = 2.0f;
+        const float direction =
+            (std::fmod(time * speed, 2 * parts) <= parts) ? 1.0f : -1.0f;
+        const float part      = std::fmod(time * speed, parts);
+        const float ipart     = std::floor(part);
+        const float dpart     = std::clamp(
+            0.5f + 1.33f * (std::fmod(part, 1.0f) - 0.5f), 0.0f, 1.0f);
+
+        const float angle =
+            direction * (ipart + std::lerp(dpart, elastic_turn(dpart), 0.25f)) *
+            glm::radians(360.0f / parts);
+        const float scale = 0.5f - 0.05f * std::sin(dpart * std::numbers::pi_v<float>);
+
         const UniformBufferObject ubo = {
-            .model = glm::rotate(mat4(1.0f), time * glm::radians(45.0f),
-                                 vec3(0.0f, 0.0f, 1.0f)),
-            .view  = glm::identity<mat4>(),
-            .proj  = glm::ortho(-aspect_ratio, aspect_ratio, -1.0f, 1.0f)};
+            .model = glm::scale(
+                glm::rotate(mat4(1.0f), angle, vec3(0.0f, 0.0f, 1.0f)),
+                vec3(scale, scale, 1.0f)),
+            .view = glm::identity<mat4>(),
+            .proj = glm::ortho(-aspect_ratio, aspect_ratio, -1.0f, 1.0f)};
 
         void *data = nullptr;
         vkMapMemory(device_, uniform_buffers_memory_.at(current_image), 0,
