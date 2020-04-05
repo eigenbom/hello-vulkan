@@ -1060,11 +1060,14 @@ class Application
     {
         // Load data
         // auto [vertices, indices] = create_octahedron();
+        auto [vertices, indices] = create_cube();
+        /*
         auto [vertices, indices] =
             load_mesh("assets/teapot.obj",
                       glm::scale(glm::translate(glm::mat4(1.0f),
                                                 vec3(0.0f, -0.75f, 0.0f)),
                                  vec3(0.5f, 0.5f, 0.5f)));
+        */
         indice_count_ = gsl::narrow_cast<uint32_t>(indices.size());
 
         // Build buffers
@@ -1973,7 +1976,7 @@ class Application
         UniformBufferObject ubo    = {
             .model = model_transform,
             .view  = glm::lookAt(
-                vec3(0.0f, 0.5f, -3.0f), vec3(0.0f, 0.0f, 0.0f),
+                vec3(0.0f, 1.5f, -3.0f), vec3(0.0f, 0.0f, 0.0f),
                 vec3(0.0f, -1.0f,
                      0.0f)), // NB: Reverse y due to opengl/vulkan differences
             .proj = glm::perspective(glm::radians(70.0f), aspect_ratio, 0.01f,
@@ -2306,6 +2309,71 @@ class Application
             0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
             12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
         }};
+
+        return {
+            vertices,
+            indices,
+        };
+    }
+
+    static std::pair<std::vector<Vertex>, std::vector<uint16_t>>
+    create_cube()
+    {
+        std::vector<Vertex> vertices;
+        std::vector<uint16_t> indices;
+
+        for (const int axis: {0, 1, 2})
+        {
+            const vec3 u = axis == 0 ? vec3(0, 0, 1)
+                               : axis == 1 ? vec3(1, 0, 0) : vec3(-1, 0, 0);
+            const vec3 v =
+                axis == 0 ? vec3(0, 1, 0) : axis == 1 ? vec3(0, 0, 1) : vec3(0, 1, 0);
+            const vec3 origin = axis == 0
+                               ? vec3(1, -1, -1)
+                               : axis == 1 ? vec3(-1, 1, -1) : vec3(1, -1, 1);
+            
+            const vec3 colour = vec3(axis == 0, axis == 1, axis == 2);
+            const vec3 normal = vec3(axis == 0, axis == 1, axis == 2);
+
+            for (const bool opposite_face : {false, true})
+            {
+                indices.push_back(gsl::narrow_cast<uint16_t>(vertices.size()));
+                indices.push_back(indices.back() + 1);
+                indices.push_back(indices.back() + 1);
+                indices.push_back(indices.back() + 1);
+                indices.push_back(indices.back() + 1);
+                indices.push_back(indices.back() + 1);
+
+                const vec3 p = origin + normal * (opposite_face ? -2.0f: 0.0f);
+
+                vertices.push_back({p, vec3(0, 0, 0)});
+                if (opposite_face)
+                {
+                    vertices.push_back({p + 2.0f * v, vec3(0, 1, 0)});
+                    vertices.push_back({p + 2.0f * u, vec3(1, 0, 0)});
+                }
+                else
+                {
+                    vertices.push_back({p + 2.0f * u, vec3(1, 0, 0)});
+                    vertices.push_back({p + 2.0f * v, vec3(0, 1, 0)});
+                }
+
+                vertices.push_back({p + 2.0f * u, vec3(1, 0, 0)});
+                if (opposite_face)
+                {
+                    vertices.push_back({p + 2.0f * v, vec3(0, 1, 0)});
+                    vertices.push_back(
+                        {p + 2.0f * u + 2.0f * v, vec3(1, 1, 0)});
+                }
+                else
+                {
+                    vertices.push_back(
+                        {p + 2.0f * u + 2.0f * v, vec3(1, 1, 0)});
+                    vertices.push_back({p + 2.0f * v, vec3(0, 1, 0)});
+                }
+                
+            }
+        }
 
         return {
             vertices,
