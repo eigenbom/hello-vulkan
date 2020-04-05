@@ -1060,8 +1060,12 @@ class Application
     {
         // Load data
         // auto [vertices, indices] = create_octahedron();
-        auto [vertices, indices] = load_mesh("assets/teapot.obj", glm::scale(glm::translate(glm::mat4(1.0f), vec3(0.0f, -0.75f, 0.0f)), vec3(0.5f, 0.5f, 0.5f)));
-        indice_count_            = gsl::narrow_cast<uint32_t>(indices.size());
+        auto [vertices, indices] =
+            load_mesh("assets/teapot.obj",
+                      glm::scale(glm::translate(glm::mat4(1.0f),
+                                                vec3(0.0f, -0.75f, 0.0f)),
+                                 vec3(0.5f, 0.5f, 0.5f)));
+        indice_count_ = gsl::narrow_cast<uint32_t>(indices.size());
 
         // Build buffers
 
@@ -2312,6 +2316,8 @@ class Application
     static std::pair<std::vector<Vertex>, std::vector<uint16_t>> load_mesh(
         const std::string &filename, mat4 transform)
     {
+        static constexpr bool debug_load_outlined = false;
+
         tinyobj::attrib_t attrib = {};
         std::vector<tinyobj::shape_t> shapes;
         std::vector<tinyobj::material_t> materials;
@@ -2341,28 +2347,58 @@ class Application
         std::vector<uint16_t> indices;
 
         // Loop over shapes
-        for (gsl::index shape_index = 0; shape_index < std::ssize(shapes); ++shape_index)
+        for (gsl::index shape_index = 0; shape_index < std::ssize(shapes);
+             ++shape_index)
         {
             // Loop over faces(polygon)
             std::size_t index_offset = 0;
             for (gsl::index face_index = 0;
-                 face_index < std::ssize(shapes[shape_index].mesh.num_face_vertices); ++face_index)
+                 face_index <
+                 std::ssize(shapes[shape_index].mesh.num_face_vertices);
+                 ++face_index)
             {
-                const int vertex_count = shapes[shape_index].mesh.num_face_vertices[face_index];
+                const int vertex_count =
+                    shapes[shape_index].mesh.num_face_vertices[face_index];
                 Expects(vertex_count == 3);
 
-                // Loop over vertices in the face.
-                for (int vertex_index = 0; vertex_index < vertex_count; ++vertex_index)
+                vec3 centroid = {0.0f, 0.0f, 0.0f};
+                vec3 normal   = {0.0f, 0.0f, 0.0f};
+                if constexpr (debug_load_outlined)
+                {
+                    const auto get_position = [&](int index) {
+                        auto idx = shapes[shape_index]
+                                       .mesh.indices[index_offset + index];
+                        auto vx  = attrib.vertices[3 * idx.vertex_index + 0];
+                        auto vy  = attrib.vertices[3 * idx.vertex_index + 1];
+                        auto vz  = attrib.vertices[3 * idx.vertex_index + 2];
+                        return vec3(vx, vy, vz);
+                    };
+
+                    for (int vertex_index = 0; vertex_index < vertex_count;
+                         ++vertex_index)
+                    {
+                        centroid += get_position(vertex_index);
+                    }
+                    centroid *= (1.0f / vertex_count);
+                    normal = glm::cross(
+                        glm::normalize(get_position(1) - get_position(0)),
+                        glm::normalize(get_position(2) - get_position(0)));
+                }
+
+                for (int vertex_index = 0; vertex_index < vertex_count;
+                     ++vertex_index)
                 {
                     // access to vertex
                     tinyobj::index_t idx =
-                        shapes[shape_index].mesh.indices[index_offset + vertex_index];
+                        shapes[shape_index]
+                            .mesh.indices[index_offset + vertex_index];
                     tinyobj::real_t vx =
                         attrib.vertices[3 * idx.vertex_index + 0];
                     tinyobj::real_t vy =
                         attrib.vertices[3 * idx.vertex_index + 1];
                     tinyobj::real_t vz =
                         attrib.vertices[3 * idx.vertex_index + 2];
+
                     if (idx.normal_index != -1)
                     {
                         tinyobj::real_t nx =
@@ -2389,15 +2425,64 @@ class Application
                     tinyobj::real_t blue =
                         attrib.colors[3 * idx.vertex_index + 2];
 
-                    indices.emplace_back(
-                        gsl::narrow_cast<uint16_t>(vertices.size()));
                     const vec3 transformed_position =
                         vec3(transform * vec4(vx, vy, vz, 1.0f));
-                    vertices.push_back(
-                        {transformed_position, vec3 {red, green, blue}});
-                }
-                index_offset += vertex_count;
 
+                    if constexpr (debug_load_outlined)
+                    {
+                        indices.emplace_back(
+                            gsl::narrow_cast<uint16_t>(vertices.size()));
+                        vertices.push_back(
+                            {transformed_position, vec3 {0, 0, 0}});
+                    }
+                    else
+                    {
+                        indices.emplace_back(
+                            gsl::narrow_cast<uint16_t>(vertices.size()));
+                        vertices.push_back(
+                            {transformed_position, vec3 {red, green, blue}});
+                    }
+                }
+
+                if constexpr (debug_load_outlined)
+                {
+                    for (int vertex_index = 0; vertex_index < vertex_count;
+                         ++vertex_index)
+                    {
+                        // access to vertex
+                        tinyobj::index_t idx =
+                            shapes[shape_index]
+                                .mesh.indices[index_offset + vertex_index];
+                        tinyobj::real_t vx =
+                            attrib.vertices[3 * idx.vertex_index + 0];
+                        tinyobj::real_t vy =
+                            attrib.vertices[3 * idx.vertex_index + 1];
+                        tinyobj::real_t vz =
+                            attrib.vertices[3 * idx.vertex_index + 2];
+
+                        // Optional: vertex colors
+                        tinyobj::real_t red =
+                            attrib.colors[3 * idx.vertex_index + 0];
+                        tinyobj::real_t green =
+                            attrib.colors[3 * idx.vertex_index + 1];
+                        tinyobj::real_t blue =
+                            attrib.colors[3 * idx.vertex_index + 2];
+
+                        vec3 transformed_position =
+                            vec3(transform * vec4(vx, vy, vz, 1.0f));
+                        transformed_position =
+                            centroid +
+                            (transformed_position - centroid) * 1.0f +
+                            normal * 0.1f;
+
+                        indices.emplace_back(
+                            gsl::narrow_cast<uint16_t>(vertices.size()));
+                        vertices.push_back(
+                            {transformed_position, vec3 {red, green, blue}});
+                    }
+                }
+
+                index_offset += vertex_count;
                 // per-face material
                 // shapes[shape_index].mesh.material_ids[face_index];
             }
