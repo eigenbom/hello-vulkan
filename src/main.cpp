@@ -187,9 +187,9 @@ static vec4 srgb_to_linear(vec4 colour) noexcept
 namespace Colours
 {
 
-static inline vec4 red    = srgb_to_linear(rgba_to_vec4(0xfe4a49ff));
-static inline vec4 blue   = srgb_to_linear(rgba_to_vec4(0x2ab7caff));
-static inline vec4 yellow = srgb_to_linear(rgba_to_vec4(0xfed766ff));
+static inline vec4 red     = srgb_to_linear(rgba_to_vec4(0xfe4a49ff));
+static inline vec4 blue    = srgb_to_linear(rgba_to_vec4(0x2ab7caff));
+static inline vec4 yellow  = srgb_to_linear(rgba_to_vec4(0xfed766ff));
 static inline vec4 light   = srgb_to_linear(rgba_to_vec4(0xe6e6eaff));
 static inline vec4 lighter = srgb_to_linear(rgba_to_vec4(0xf4f4f8ff));
 
@@ -1236,7 +1236,7 @@ class Application
                     "Failed to begin recording command buffer!");
             }
 
-            const auto bg = Colours::lighter;
+            const auto bg                                  = Colours::lighter;
             const std::array<VkClearValue, 3> clear_values = {{
                 {bg.r, bg.g, bg.b, bg.a},
                 {0.0f},
