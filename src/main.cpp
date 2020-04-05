@@ -8,6 +8,7 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
+#define GLM_FORCE_LEFT_HANDED
 
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
@@ -34,7 +35,7 @@
 #include <string_view>
 #include <vector>
 
-using glm::vec2, glm::vec3, glm::mat4;
+using glm::vec2, glm::vec3, glm::vec4, glm::mat4;
 
 enum class BuildMode
 {
@@ -154,6 +155,28 @@ struct UniformBufferObject
     alignas(16) glm::mat4 proj;
 };
 
+static constexpr vec4 rgba_to_vec4(uint32_t rgba) noexcept
+{
+    return {
+        ((rgba & 0xff000000) >> 24) / 255.0f,
+        ((rgba & 0x00ff0000) >> 16) / 255.0f,
+        ((rgba & 0x0000ff00) >> 8) / 255.0f,
+        ((rgba & 0x000000ff) >> 0) / 255.0f,
+    };
+}
+
+namespace Colours
+{
+
+static constexpr vec4 red    = rgba_to_vec4(0xfe4a49ff);
+static constexpr vec4 blue   = rgba_to_vec4(0x2ab7caff);
+static constexpr vec4 yellow = rgba_to_vec4(0xfed766ff);
+
+static constexpr vec4 light   = rgba_to_vec4(0xe6e6eaff);
+static constexpr vec4 lighter = rgba_to_vec4(0xf4f4f8ff);
+
+} // namespace Colours
+
 class Application
 {
   private:
@@ -169,13 +192,13 @@ class Application
 
     // Two equilateral triangles, the first on top of the second
     static constexpr std::array<Vertex, 6> vertices_ = {{
-        {{1.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}},
-        {{-0.5f, 0.86f, 0.0f}, {0.0f, 1.0f, 0.0f}},
-        {{-0.5f, -0.86f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+        {{1.0f, 0.0f, 0.25f}, Colours::red},
+        {{-0.5f, 0.86f, 0.25f}, Colours::red},
+        {{-0.5f, -0.86f, 0.25f}, Colours::red},
 
-        {{-1.0f, 0.0f, 0.5f}, {0.0f, 0.0f, 0.0f}},
-        {{0.5f, -0.86f, 0.5f}, {0.0f, 0.0f, 0.0f}},
-        {{0.5f, 0.86f, 0.5f}, {0.0f, 0.0f, 0.0f}},
+        {{-1.0f, 0.0f, 0.5f}, Colours::blue},
+        {{0.5f, -0.86f, 0.5f}, Colours::blue},
+        {{0.5f, 0.86f, 0.5f}, Colours::blue},
     }};
 
     static constexpr std::array<uint16_t, 6> indices_ = {{0, 1, 2, 3, 4, 5}};
@@ -889,9 +912,9 @@ class Application
 
         const VkPipelineDepthStencilStateCreateInfo depth_stencil = {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-            .depthTestEnable  = VK_TRUE,
-            .depthWriteEnable = VK_TRUE,
-            .depthCompareOp   = VK_COMPARE_OP_LESS,
+            .depthTestEnable       = VK_TRUE,
+            .depthWriteEnable      = VK_TRUE,
+            .depthCompareOp        = VK_COMPARE_OP_LESS,
             .depthBoundsTestEnable = VK_FALSE,
         };
 
@@ -1195,9 +1218,10 @@ class Application
                     "Failed to begin recording command buffer!");
             }
 
+            constexpr auto bg = Colours::lighter;
             const std::array<VkClearValue, 3> clear_values = {{
-                {1.0f, 1.0f, 1.0f, 1.0f},
-                {1.0f, 1.0f, 1.0f, 1.0f},
+                {bg.r, bg.g, bg.b, bg.a},
+                {bg.r, bg.g, bg.b, bg.a},
                 {1.0f},
             }};
 
@@ -1206,8 +1230,9 @@ class Application
                 .renderPass  = render_pass_,
                 .framebuffer = swap_chain_framebuffers_.at(i),
                 .renderArea  = {.offset = {0, 0}, .extent = swap_chain_extent_},
-                .clearValueCount = gsl::narrow_cast<uint32_t>(clear_values.size()),
-                .pClearValues    = clear_values.data(),
+                .clearValueCount =
+                    gsl::narrow_cast<uint32_t>(clear_values.size()),
+                .pClearValues = clear_values.data(),
             };
 
             vkCmdBeginRenderPass(command_buffers_.at(i), &render_pass_info,
@@ -1891,8 +1916,9 @@ class Application
             else
             {
                 const float f = (1.0f - (2.0f * p - 1.0f));
-                return 0.5f * (1.0f - (f * f * f -
-                                   f * sin(f * std::numbers::pi_v<float>))) +
+                return 0.5f *
+                           (1.0f - (f * f * f -
+                                    f * sin(f * std::numbers::pi_v<float>))) +
                        0.5f;
             }
         };
@@ -1904,20 +1930,21 @@ class Application
         const float part  = std::fmod(time * speed, parts);
         const float ipart = std::floor(part);
         const float dpart = std::clamp(
-            0.5f + 1.33f * (std::fmod(part, 1.0f) - 0.5f), 0.0f, 1.0f);
+            0.5f + 1.8f * (std::fmod(part, 1.0f) - 0.5f), 0.0f, 1.0f);
 
         const float angle =
             direction * (ipart + std::lerp(dpart, elastic_turn(dpart), 0.25f)) *
             glm::radians(360.0f / parts);
         const float scale =
-            0.5f - 0.05f * std::sin(dpart * std::numbers::pi_v<float>);
+            0.75f - 0.035f * std::sin(dpart * std::numbers::pi_v<float>);
 
         const UniformBufferObject ubo = {
             .model = glm::scale(
                 glm::rotate(mat4(1.0f), angle, vec3(0.0f, 0.0f, 1.0f)),
                 vec3(scale, scale, 1.0f)),
             .view = glm::identity<mat4>(),
-            .proj = glm::orthoRH_ZO(-aspect_ratio, aspect_ratio, 1.0f, -1.0f, -1.0f, 2.0f),
+            .proj = glm::ortho(-aspect_ratio, aspect_ratio, 1.0f, -1.0f, 0.01f,
+                               1.1f),
         };
 
         void *data = nullptr;
@@ -2088,7 +2115,8 @@ class Application
             (old_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
              new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL));
 
-        VkCommandBuffer command_buffer = begin_single_time_commands(device_, command_pool_);
+        VkCommandBuffer command_buffer =
+            begin_single_time_commands(device_, command_pool_);
 
         const VkImageAspectFlags aspect_mask =
             new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
