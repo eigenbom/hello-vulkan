@@ -10,7 +10,9 @@
 #define GLM_FORCE_RADIANS
 // #define GLM_FORCE_LEFT_HANDED
 #define GLM_FORCE_PURE
+#define TINYOBJLOADER_IMPLEMENTATION
 
+#include "tiny_obj_loader.h"
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 #include <fmt/core.h>
@@ -208,55 +210,6 @@ class Application
     static constexpr std::array<const char *, 1> device_extensions_ = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
-    static constexpr std::array<vec3, 6> pos = {{
-        {-1.0f, 0.0f, -1.0f},
-        {1.0f, 0.0f, -1.0f},
-        {1.0f, 0.0f, 1.0f},
-        {-1.0f, 0.0f, 1.0f},
-        {0.0f, 1.73f, 0.0f},
-        {0.0f, -1.73f, 0.0f},
-    }};
-
-    static constexpr float darken_factor           = 0.75f;
-    static inline std::array<Vertex, 24> vertices_ = {{
-        {pos.at(0), Colours::red},
-        {pos.at(1), Colours::red},
-        {pos.at(4), Colours::red},
-
-        {pos.at(1), Colours::yellow},
-        {pos.at(2), Colours::yellow},
-        {pos.at(4), Colours::yellow},
-
-        {pos.at(2), Colours::blue},
-        {pos.at(3), Colours::blue},
-        {pos.at(4), Colours::blue},
-
-        {pos.at(3), Colours::light},
-        {pos.at(0), Colours::light},
-        {pos.at(4), Colours::light},
-
-        {pos.at(0), Colours::blue * darken_factor},
-        {pos.at(5), Colours::blue * darken_factor},
-        {pos.at(1), Colours::blue * darken_factor},
-
-        {pos.at(1), Colours::light * darken_factor},
-        {pos.at(5), Colours::light * darken_factor},
-        {pos.at(2), Colours::light * darken_factor},
-
-        {pos.at(2), Colours::red * darken_factor},
-        {pos.at(5), Colours::red * darken_factor},
-        {pos.at(3), Colours::red * darken_factor},
-
-        {pos.at(3), Colours::yellow * darken_factor},
-        {pos.at(5), Colours::yellow * darken_factor},
-        {pos.at(0), Colours::yellow * darken_factor},
-    }};
-
-    static inline std::array<uint16_t, 24> indices_ = {{
-        0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-        12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-    }};
-
     GLFWwindow *window_                                  = nullptr;
     VkInstance instance_                                 = nullptr;
     VkPhysicalDevice physical_device_                    = nullptr;
@@ -298,6 +251,7 @@ class Application
     VkImage depth_image_                = VK_NULL_HANDLE;
     VkDeviceMemory depth_image_memory_  = VK_NULL_HANDLE;
     VkImageView depth_image_view_       = VK_NULL_HANDLE;
+    uint32_t indice_count_              = 0;
 
   public:
     void run()
@@ -349,8 +303,7 @@ class Application
         create_colour_resources();
         create_depth_resources();
         create_framebuffers();
-        create_vertex_buffer();
-        create_index_buffer();
+        create_vertex_and_index_buffers();
         create_uniform_buffers();
         create_descriptor_pool();
         create_descriptor_sets();
@@ -1103,61 +1056,73 @@ class Application
         log_info("Created command pool");
     }
 
-    void create_vertex_buffer()
+    void create_vertex_and_index_buffers()
     {
-        constexpr VkDeviceSize buffer_size =
-            sizeof(Vertex) * gsl::narrow_cast<VkDeviceSize>(vertices_.size());
+        // Load data
+        // auto [vertices, indices] = create_octahedron();
+        auto [vertices, indices] = load_mesh("assets/teapot.obj", glm::scale(glm::translate(glm::mat4(1.0f), vec3(0.0f, -0.75f, 0.0f)), vec3(0.5f, 0.5f, 0.5f)));
+        indice_count_            = gsl::narrow_cast<uint32_t>(indices.size());
 
-        const auto [staging_buffer, staging_buffer_memory] =
-            create_buffer(physical_device_, device_, buffer_size,
-                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        // Build buffers
 
-        void *data = nullptr;
-        vkMapMemory(device_, staging_buffer_memory, 0, buffer_size, 0, &data);
-        std::memcpy(data, vertices_.data(),
-                    gsl::narrow_cast<std::size_t>(buffer_size));
-        vkUnmapMemory(device_, staging_buffer_memory);
+        {
+            const VkDeviceSize buffer_size =
+                sizeof(Vertex) *
+                gsl::narrow_cast<VkDeviceSize>(vertices.size());
 
-        std::tie(vertex_buffer_, vertex_buffer_memory_) =
-            create_buffer(physical_device_, device_, buffer_size,
-                          VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            const auto [staging_buffer, staging_buffer_memory] =
+                create_buffer(physical_device_, device_, buffer_size,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-        copy_buffer(staging_buffer, vertex_buffer_, buffer_size);
-        vkDestroyBuffer(device_, staging_buffer, nullptr);
-        vkFreeMemory(device_, staging_buffer_memory, nullptr);
-    }
+            void *data = nullptr;
+            vkMapMemory(device_, staging_buffer_memory, 0, buffer_size, 0,
+                        &data);
+            std::memcpy(data, vertices.data(),
+                        gsl::narrow_cast<std::size_t>(buffer_size));
+            vkUnmapMemory(device_, staging_buffer_memory);
 
-    void create_index_buffer()
-    {
-        const VkDeviceSize buffer_size =
-            sizeof(indices_[0]) *
-            gsl::narrow_cast<VkDeviceSize>(indices_.size());
+            std::tie(vertex_buffer_, vertex_buffer_memory_) =
+                create_buffer(physical_device_, device_, buffer_size,
+                              VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-        const auto [staging_buffer, staging_buffer_memory] =
-            create_buffer(physical_device_, device_, buffer_size,
-                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            copy_buffer(staging_buffer, vertex_buffer_, buffer_size);
+            vkDestroyBuffer(device_, staging_buffer, nullptr);
+            vkFreeMemory(device_, staging_buffer_memory, nullptr);
+        }
 
-        void *data = nullptr;
-        vkMapMemory(device_, staging_buffer_memory, 0, buffer_size, 0, &data);
-        std::memcpy(data, indices_.data(),
-                    gsl::narrow_cast<std::size_t>(buffer_size));
-        vkUnmapMemory(device_, staging_buffer_memory);
+        {
+            const VkDeviceSize buffer_size =
+                sizeof(indices[0]) *
+                gsl::narrow_cast<VkDeviceSize>(indices.size());
 
-        std::tie(index_buffer_, index_buffer_memory_) = create_buffer(
-            physical_device_, device_, buffer_size,
-            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            const auto [staging_buffer, staging_buffer_memory] =
+                create_buffer(physical_device_, device_, buffer_size,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-        copy_buffer(staging_buffer, index_buffer_, buffer_size);
+            void *data = nullptr;
+            vkMapMemory(device_, staging_buffer_memory, 0, buffer_size, 0,
+                        &data);
+            std::memcpy(data, indices.data(),
+                        gsl::narrow_cast<std::size_t>(buffer_size));
+            vkUnmapMemory(device_, staging_buffer_memory);
 
-        vkDestroyBuffer(device_, staging_buffer, nullptr);
-        vkFreeMemory(device_, staging_buffer_memory, nullptr);
+            std::tie(index_buffer_, index_buffer_memory_) =
+                create_buffer(physical_device_, device_, buffer_size,
+                              VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                  VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+            copy_buffer(staging_buffer, index_buffer_, buffer_size);
+
+            vkDestroyBuffer(device_, staging_buffer, nullptr);
+            vkFreeMemory(device_, staging_buffer_memory, nullptr);
+        }
     }
 
     void create_uniform_buffers()
@@ -1305,9 +1270,7 @@ class Application
                 command_buffers_.at(i), VK_PIPELINE_BIND_POINT_GRAPHICS,
                 pipeline_layout_, 0, 1, &descriptor_sets_.at(i), 0, nullptr);
 
-            vkCmdDrawIndexed(command_buffers_.at(i),
-                             gsl::narrow_cast<uint32_t>(indices_.size()), 1, 0,
-                             0, 0);
+            vkCmdDrawIndexed(command_buffers_.at(i), indice_count_, 1, 0, 0, 0);
             vkCmdEndRenderPass(command_buffers_.at(i));
             if (vkEndCommandBuffer(command_buffers_.at(i)) != VK_SUCCESS)
             {
@@ -1959,43 +1922,53 @@ class Application
             gsl::narrow_cast<float>(swap_chain_extent_.width) /
             swap_chain_extent_.height;
 
-        const auto elastic_turn = [](float p) -> float {
-            if (p < 0.5f)
-            {
-                const float f = 2.0f * p;
-                return 0.5f *
-                       (f * f * f - f * sin(f * std::numbers::pi_v<float>));
-            }
-            else
-            {
-                const float f = (1.0f - (2.0f * p - 1.0f));
-                return 0.5f *
-                           (1.0f - (f * f * f -
+        const mat4 stutter_turn_model_transform = [&]() {
+            const auto elastic_turn = [](float p) -> float {
+                if (p < 0.5f)
+                {
+                    const float f = 2.0f * p;
+                    return 0.5f *
+                           (f * f * f - f * sin(f * std::numbers::pi_v<float>));
+                }
+                else
+                {
+                    const float f = (1.0f - (2.0f * p - 1.0f));
+                    return 0.5f * (1.0f -
+                                   (f * f * f -
                                     f * sin(f * std::numbers::pi_v<float>))) +
-                       0.5f;
-            }
-        };
+                           0.5f;
+                }
+            };
 
-        constexpr float parts = 4.0f;
-        constexpr float speed = 2.0f;
-        const float direction =
-            (std::fmod(time * speed, 2 * parts) <= parts) ? 1.0f : -1.0f;
-        const float part  = std::fmod(time * speed, parts);
-        const float ipart = std::floor(part);
-        const float dpart = std::clamp(
-            0.5f + 3.8f * (std::fmod(part, 1.0f) - 0.5f), 0.0f, 1.0f);
+            constexpr float parts = 4.0f;
+            constexpr float speed = 2.0f;
+            const float direction =
+                (std::fmod(time * speed, 2 * parts) <= parts) ? 1.0f : -1.0f;
+            const float part  = std::fmod(time * speed, parts);
+            const float ipart = std::floor(part);
+            const float dpart = std::clamp(
+                0.5f + 3.8f * (std::fmod(part, 1.0f) - 0.5f), 0.0f, 1.0f);
 
-        const float angle =
-            direction * (ipart + std::lerp(dpart, elastic_turn(dpart), 0.25f)) *
-            glm::radians(360.0f / parts);
-        const float scale =
-            0.95f - 0.05f * std::sin(dpart * std::numbers::pi_v<float>);
+            const float angle =
+                direction *
+                (ipart + std::lerp(dpart, elastic_turn(dpart), 0.25f)) *
+                glm::radians(360.0f / parts);
+            const float scale =
+                0.95f - 0.05f * std::sin(dpart * std::numbers::pi_v<float>);
 
-        UniformBufferObject ubo = {
-            .model = glm::scale(glm::rotate(mat4(1.0f), glm::radians(45.0f) + angle,
-                                            vec3(0.0f, 1.0f, 0.0f)),
-                vec3(scale, scale, scale)),
-            .view = glm::lookAt(
+            return glm::scale(glm::rotate(mat4(1.0f),
+                                          glm::radians(45.0f) + angle,
+                                          vec3(0.0f, 1.0f, 0.0f)),
+                              vec3(scale, scale, scale));
+        }();
+
+        const mat4 linear_turn_model_transform = glm::rotate(
+            mat4(1.0f), glm::radians(45.0f) * time * 3, vec3(0.0f, 1.0f, 0.0f));
+
+        const mat4 model_transform = linear_turn_model_transform;
+        UniformBufferObject ubo    = {
+            .model = model_transform,
+            .view  = glm::lookAt(
                 vec3(0.0f, 0.5f, -3.0f), vec3(0.0f, 0.0f, 0.0f),
                 vec3(0.0f, -1.0f,
                      0.0f)), // NB: Reverse y due to opengl/vulkan differences
@@ -2276,6 +2249,164 @@ class Application
         vkQueueWaitIdle(graphics_queue);
 
         vkFreeCommandBuffers(device, command_pool, 1, &command_buffer);
+    }
+
+    static std::pair<std::vector<Vertex>, std::vector<uint16_t>>
+    create_octahedron()
+    {
+        static constexpr std::array<vec3, 6> pos = {{
+            {-1.0f, 0.0f, -1.0f},
+            {1.0f, 0.0f, -1.0f},
+            {1.0f, 0.0f, 1.0f},
+            {-1.0f, 0.0f, 1.0f},
+            {0.0f, 1.73f, 0.0f},
+            {0.0f, -1.73f, 0.0f},
+        }};
+
+        static constexpr float darken_factor = 0.75f;
+        const std::vector<Vertex> vertices   = {{
+            {pos.at(0), Colours::red},
+            {pos.at(1), Colours::red},
+            {pos.at(4), Colours::red},
+
+            {pos.at(1), Colours::yellow},
+            {pos.at(2), Colours::yellow},
+            {pos.at(4), Colours::yellow},
+
+            {pos.at(2), Colours::blue},
+            {pos.at(3), Colours::blue},
+            {pos.at(4), Colours::blue},
+
+            {pos.at(3), Colours::light},
+            {pos.at(0), Colours::light},
+            {pos.at(4), Colours::light},
+
+            {pos.at(0), Colours::blue * darken_factor},
+            {pos.at(5), Colours::blue * darken_factor},
+            {pos.at(1), Colours::blue * darken_factor},
+
+            {pos.at(1), Colours::light * darken_factor},
+            {pos.at(5), Colours::light * darken_factor},
+            {pos.at(2), Colours::light * darken_factor},
+
+            {pos.at(2), Colours::red * darken_factor},
+            {pos.at(5), Colours::red * darken_factor},
+            {pos.at(3), Colours::red * darken_factor},
+
+            {pos.at(3), Colours::yellow * darken_factor},
+            {pos.at(5), Colours::yellow * darken_factor},
+            {pos.at(0), Colours::yellow * darken_factor},
+        }};
+
+        const std::vector<uint16_t> indices = {{
+            0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
+            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+        }};
+
+        return {
+            vertices,
+            indices,
+        };
+    }
+
+    static std::pair<std::vector<Vertex>, std::vector<uint16_t>> load_mesh(
+        const std::string &filename, mat4 transform)
+    {
+        tinyobj::attrib_t attrib = {};
+        std::vector<tinyobj::shape_t> shapes;
+        std::vector<tinyobj::material_t> materials;
+        std::string warning_message;
+        std::string error_message;
+        const bool result =
+            tinyobj::LoadObj(&attrib, &shapes, &materials, &warning_message,
+                             &error_message, filename.c_str());
+
+        if (!warning_message.empty())
+        {
+            log_warn(warning_message);
+        }
+
+        if (!error_message.empty())
+        {
+            log_error(error_message);
+        }
+
+        if (!result)
+        {
+            throw std::runtime_error(
+                fmt::format("Couldn't load mesh \"{}\"!", filename));
+        }
+
+        std::vector<Vertex> vertices;
+        std::vector<uint16_t> indices;
+
+        // Loop over shapes
+        for (gsl::index shape_index = 0; shape_index < std::ssize(shapes); ++shape_index)
+        {
+            // Loop over faces(polygon)
+            std::size_t index_offset = 0;
+            for (gsl::index face_index = 0;
+                 face_index < std::ssize(shapes[shape_index].mesh.num_face_vertices); ++face_index)
+            {
+                const int vertex_count = shapes[shape_index].mesh.num_face_vertices[face_index];
+                Expects(vertex_count == 3);
+
+                // Loop over vertices in the face.
+                for (int vertex_index = 0; vertex_index < vertex_count; ++vertex_index)
+                {
+                    // access to vertex
+                    tinyobj::index_t idx =
+                        shapes[shape_index].mesh.indices[index_offset + vertex_index];
+                    tinyobj::real_t vx =
+                        attrib.vertices[3 * idx.vertex_index + 0];
+                    tinyobj::real_t vy =
+                        attrib.vertices[3 * idx.vertex_index + 1];
+                    tinyobj::real_t vz =
+                        attrib.vertices[3 * idx.vertex_index + 2];
+                    if (idx.normal_index != -1)
+                    {
+                        tinyobj::real_t nx =
+                            attrib.normals[3 * idx.normal_index + 0];
+                        tinyobj::real_t ny =
+                            attrib.normals[3 * idx.normal_index + 1];
+                        tinyobj::real_t nz =
+                            attrib.normals[3 * idx.normal_index + 2];
+                    }
+
+                    if (idx.texcoord_index != -1)
+                    {
+                        tinyobj::real_t tx =
+                            attrib.texcoords[2 * idx.texcoord_index + 0];
+                        tinyobj::real_t ty =
+                            attrib.texcoords[2 * idx.texcoord_index + 1];
+                    }
+
+                    // Optional: vertex colors
+                    tinyobj::real_t red =
+                        attrib.colors[3 * idx.vertex_index + 0];
+                    tinyobj::real_t green =
+                        attrib.colors[3 * idx.vertex_index + 1];
+                    tinyobj::real_t blue =
+                        attrib.colors[3 * idx.vertex_index + 2];
+
+                    indices.emplace_back(
+                        gsl::narrow_cast<uint16_t>(vertices.size()));
+                    const vec3 transformed_position =
+                        vec3(transform * vec4(vx, vy, vz, 1.0f));
+                    vertices.push_back(
+                        {transformed_position, vec3 {red, green, blue}});
+                }
+                index_offset += vertex_count;
+
+                // per-face material
+                // shapes[shape_index].mesh.material_ids[face_index];
+            }
+        }
+
+        return {
+            vertices,
+            indices,
+        };
     }
 };
 

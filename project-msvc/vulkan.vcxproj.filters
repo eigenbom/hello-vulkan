@@ -23,4 +23,9 @@
     <None Include="packages.config" />
     <None Include="..\.clang-format" />
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\src\tiny_obj_loader.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+  </ItemGroup>
 </Project>
