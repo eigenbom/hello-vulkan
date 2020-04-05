@@ -3,10 +3,11 @@
 //
 // Code adapted from vulkan-tutorial.com
 
+#define NOMINMAX
 #define GLFW_INCLUDE_VULKAN
 #define GLFW_EXPOSE_NATIVE_WIN32
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
-#define NOMINMAX
 
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
@@ -118,7 +119,7 @@ DestroyDebugUtilsMessengerEXT(VkInstance instance,
 
 struct Vertex
 {
-    vec2 pos;
+    vec3 pos;
     vec3 colour;
 
     static constexpr VkVertexInputBindingDescription
@@ -135,7 +136,7 @@ struct Vertex
         return {{
             {.location = 0,
              .binding  = 0,
-             .format   = VK_FORMAT_R32G32_SFLOAT,
+             .format   = VK_FORMAT_R32G32B32_SFLOAT,
              .offset   = offsetof(Vertex, pos)},
 
             {.location = 1,
@@ -148,9 +149,9 @@ struct Vertex
 
 struct UniformBufferObject
 {
-    glm::mat4 model;
-    glm::mat4 view;
-    glm::mat4 proj;
+    alignas(16) glm::mat4 model;
+    alignas(16) glm::mat4 view;
+    alignas(16) glm::mat4 proj;
 };
 
 class Application
@@ -166,17 +167,18 @@ class Application
     static constexpr std::array<const char *, 1> device_extensions_ = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
-    static constexpr std::array<Vertex, 3> vertices_ = {{
-        {{1.0f, 0.0f}, {1.0f, 0.0f, 0.0f}},
-        {{-0.5f, 0.86f}, {0.0f, 1.0f, 0.0f}},
-        {{-0.5f, -0.86f}, {0.0f, 0.0f, 1.0f}},
+    // Two equilateral triangles, the first on top of the second
+    static constexpr std::array<Vertex, 6> vertices_ = {{
+        {{1.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}},
+        {{-0.5f, 0.86f, 0.0f}, {0.0f, 1.0f, 0.0f}},
+        {{-0.5f, -0.86f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+
+        {{-1.0f, 0.0f, 0.5f}, {0.0f, 0.0f, 0.0f}},
+        {{0.5f, -0.86f, 0.5f}, {0.0f, 0.0f, 0.0f}},
+        {{0.5f, 0.86f, 0.5f}, {0.0f, 0.0f, 0.0f}},
     }};
 
-    static constexpr std::array<uint16_t, 3> indices_ = {{
-        0,
-        1,
-        2,
-    }};
+    static constexpr std::array<uint16_t, 6> indices_ = {{0, 1, 2, 3, 4, 5}};
 
     GLFWwindow *window_                                  = nullptr;
     VkInstance instance_                                 = nullptr;
@@ -216,6 +218,9 @@ class Application
     VkImage colour_image_               = VK_NULL_HANDLE;
     VkDeviceMemory colour_image_memory_ = VK_NULL_HANDLE;
     VkImageView colour_image_view_      = VK_NULL_HANDLE;
+    VkImage depth_image_                = VK_NULL_HANDLE;
+    VkDeviceMemory depth_image_memory_  = VK_NULL_HANDLE;
+    VkImageView depth_image_view_       = VK_NULL_HANDLE;
 
   public:
     void run()
@@ -263,9 +268,10 @@ class Application
         create_render_pass();
         create_descriptor_set_layout();
         create_graphics_pipeline();
-        create_colour_resources();
-        create_framebuffers();
         create_command_pool();
+        create_colour_resources();
+        create_depth_resources();
+        create_framebuffers();
         create_vertex_buffer();
         create_index_buffer();
         create_uniform_buffers();
@@ -690,11 +696,28 @@ class Application
             .layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         };
 
+        const VkAttachmentDescription depth_attachment = {
+            .format         = find_depth_format(physical_device_),
+            .samples        = msaa_samples_,
+            .loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp        = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        };
+
+        const VkAttachmentReference depth_attachment_ref = {
+            .attachment = 2,
+            .layout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        };
+
         const VkSubpassDescription subpass = {
-            .pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS,
-            .colorAttachmentCount = 1,
-            .pColorAttachments    = &colour_attachment_ref,
-            .pResolveAttachments  = &colour_attachment_resolve_ref,
+            .pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS,
+            .colorAttachmentCount    = 1,
+            .pColorAttachments       = &colour_attachment_ref,
+            .pResolveAttachments     = &colour_attachment_resolve_ref,
+            .pDepthStencilAttachment = &depth_attachment_ref,
         };
 
         const VkSubpassDependency dependency = {
@@ -705,8 +728,11 @@ class Application
             .srcAccessMask = 0,
             .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT};
 
-        const std::array<VkAttachmentDescription, 2> attachments = {
-            colour_attachment, colour_attachment_resolve};
+        const std::array<VkAttachmentDescription, 3> attachments = {
+            colour_attachment,
+            colour_attachment_resolve,
+            depth_attachment,
+        };
 
         const VkRenderPassCreateInfo render_pass_info = {
             .sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
@@ -831,7 +857,7 @@ class Application
             .rasterizerDiscardEnable = VK_FALSE,
             .polygonMode             = VK_POLYGON_MODE_FILL,
             .cullMode                = VK_CULL_MODE_BACK_BIT,
-            .frontFace               = VK_FRONT_FACE_CLOCKWISE,
+            .frontFace               = VK_FRONT_FACE_COUNTER_CLOCKWISE,
             .depthBiasEnable         = VK_FALSE,
             .lineWidth               = 1.0f,
         };
@@ -859,6 +885,16 @@ class Application
             .pAttachments    = &colour_blend_attachment,
         };
 
+        // Depth testing
+
+        const VkPipelineDepthStencilStateCreateInfo depth_stencil = {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+            .depthTestEnable  = VK_TRUE,
+            .depthWriteEnable = VK_TRUE,
+            .depthCompareOp   = VK_COMPARE_OP_LESS,
+            .depthBoundsTestEnable = VK_FALSE,
+        };
+
         // Create pipeline layout
 
         const VkPipelineLayoutCreateInfo pipeline_layout_info = {
@@ -884,6 +920,7 @@ class Application
             .pViewportState      = &viewport_state,
             .pRasterizationState = &rasterizer,
             .pMultisampleState   = &multisampling,
+            .pDepthStencilState  = &depth_stencil,
             .pColorBlendState    = &colour_blending,
             .layout              = pipeline_layout_,
             .renderPass          = render_pass_,
@@ -919,14 +956,33 @@ class Application
                               VK_IMAGE_ASPECT_COLOR_BIT, 1);
     }
 
+    void create_depth_resources()
+    {
+        const VkFormat depth_format = find_depth_format(physical_device_);
+
+        std::tie(depth_image_, depth_image_memory_) =
+            create_image(physical_device_, device_, swap_chain_extent_.width,
+                         swap_chain_extent_.height, msaa_samples_, depth_format,
+                         VK_IMAGE_TILING_OPTIMAL,
+                         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        depth_image_view_ = create_image_view(
+            device_, depth_image_, depth_format, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
+
+        transition_image_layout(
+            depth_image_, depth_format, VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    }
+
     void create_framebuffers()
     {
         swap_chain_framebuffers_.resize(swap_chain_image_views_.size());
         for (gsl::index i = 0; i < std::ssize(swap_chain_image_views_); ++i)
         {
-            const std::array<VkImageView, 2> attachments = {
+            const std::array<VkImageView, 3> attachments = {
                 colour_image_view_,
                 swap_chain_image_views_.at(i),
+                depth_image_view_,
             };
             const VkFramebufferCreateInfo framebuffer_info = {
                 .sType      = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
@@ -1139,15 +1195,19 @@ class Application
                     "Failed to begin recording command buffer!");
             }
 
-            const VkClearValue clear_colour = {1.0f, 1.0f, 1.0f, 1.0f};
+            const std::array<VkClearValue, 3> clear_values = {{
+                {1.0f, 1.0f, 1.0f, 1.0f},
+                {1.0f, 1.0f, 1.0f, 1.0f},
+                {1.0f},
+            }};
 
             const VkRenderPassBeginInfo render_pass_info = {
                 .sType       = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
                 .renderPass  = render_pass_,
                 .framebuffer = swap_chain_framebuffers_.at(i),
                 .renderArea  = {.offset = {0, 0}, .extent = swap_chain_extent_},
-                .clearValueCount = 1,
-                .pClearValues    = &clear_colour,
+                .clearValueCount = gsl::narrow_cast<uint32_t>(clear_values.size()),
+                .pClearValues    = clear_values.data(),
             };
 
             vkCmdBeginRenderPass(command_buffers_.at(i), &render_pass_info,
@@ -1306,8 +1366,18 @@ class Application
     void cleanup_swap_chain() noexcept
     {
         vkDestroyImageView(device_, colour_image_view_, nullptr);
+        colour_image_view_ = VK_NULL_HANDLE;
         vkDestroyImage(device_, colour_image_, nullptr);
+        colour_image_ = VK_NULL_HANDLE;
         vkFreeMemory(device_, colour_image_memory_, nullptr);
+        colour_image_memory_ = VK_NULL_HANDLE;
+
+        vkDestroyImageView(device_, depth_image_view_, nullptr);
+        depth_image_view_ = VK_NULL_HANDLE;
+        vkDestroyImage(device_, depth_image_, nullptr);
+        depth_image_ = VK_NULL_HANDLE;
+        vkFreeMemory(device_, depth_image_memory_, nullptr);
+        depth_image_memory_ = VK_NULL_HANDLE;
 
         for (auto framebuffer : swap_chain_framebuffers_)
         {
@@ -1378,6 +1448,7 @@ class Application
         create_render_pass();
         create_graphics_pipeline();
         create_colour_resources();
+        create_depth_resources();
         create_framebuffers();
         create_uniform_buffers();
         create_descriptor_pool();
@@ -1749,37 +1820,50 @@ class Application
     void copy_buffer(VkBuffer src_buffer, VkBuffer dst_buffer,
                      VkDeviceSize size) noexcept
     {
-        const VkCommandBufferAllocateInfo alloc_info = {
-            .sType       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .commandPool = command_pool_,
-            .level       = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-            .commandBufferCount = 1,
+        const VkCommandBuffer command_buffer =
+            begin_single_time_commands(device_, command_pool_);
+
+        const VkBufferCopy copy_region = {
+            .size = size,
         };
-
-        VkCommandBuffer command_buffer = {};
-        vkAllocateCommandBuffers(device_, &alloc_info, &command_buffer);
-
-        const VkCommandBufferBeginInfo begin_info = {
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-        };
-
-        vkBeginCommandBuffer(command_buffer, &begin_info);
-
-        const VkBufferCopy copy_region = {.size = size};
         vkCmdCopyBuffer(command_buffer, src_buffer, dst_buffer, 1,
                         &copy_region);
-        vkEndCommandBuffer(command_buffer);
 
-        const VkSubmitInfo submit_info = {
-            .sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .commandBufferCount = 1,
-            .pCommandBuffers    = &command_buffer,
+        end_single_time_commands(device_, command_pool_, graphics_queue_,
+                                 command_buffer);
+    }
+
+    void copy_buffer_to_image(VkBuffer buffer, VkImage image, uint32_t width,
+                              uint32_t height) noexcept
+    {
+        VkCommandBuffer command_buffer =
+            begin_single_time_commands(device_, command_pool_);
+
+        const VkBufferImageCopy region = {
+            .bufferOffset      = 0,
+            .bufferRowLength   = 0,
+            .bufferImageHeight = 0,
+            .imageSubresource =
+                {
+                    .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .mipLevel       = 0,
+                    .baseArrayLayer = 0,
+                    .layerCount     = 1,
+                },
+            .imageOffset = {0, 0, 0},
+            .imageExtent =
+                {
+                    width,
+                    height,
+                    1,
+                },
         };
-        vkQueueSubmit(graphics_queue_, 1, &submit_info, VK_NULL_HANDLE);
-        vkQueueWaitIdle(graphics_queue_);
+        vkCmdCopyBufferToImage(command_buffer, buffer, image,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                               &region);
 
-        vkFreeCommandBuffers(device_, command_pool_, 1, &command_buffer);
+        end_single_time_commands(device_, command_pool_, graphics_queue_,
+                                 command_buffer);
     }
 
     void update_uniform_buffer(uint32_t current_image)
@@ -1797,30 +1881,19 @@ class Application
             gsl::narrow_cast<float>(swap_chain_extent_.width) /
             swap_chain_extent_.height;
 
-        const auto test_turn = [](float p) -> float {
+        const auto elastic_turn = [](float p) -> float {
             if (p < 0.5f)
             {
-                return 4 * p * p * p;
+                const float f = 2.0f * p;
+                return 0.5f *
+                       (f * f * f - f * sin(f * std::numbers::pi_v<float>));
             }
             else
             {
-                const float f = ((2.0f * p) - 2.0f);
-                return 0.5f * f * f * f + 1;
-            }
-        };
-
-        const auto elastic_turn = [](float p) -> float {
-            if (p < 0.5)
-            {
-                float f = 2 * p;
-                return 0.5 * (f * f * f - f * sin(f * std::numbers::pi_v<float>));
-            }
-            else
-            {
-                float f = (1 - (2 * p - 1));
-                return 0.5 * (1 - (f * f * f -
+                const float f = (1.0f - (2.0f * p - 1.0f));
+                return 0.5f * (1.0f - (f * f * f -
                                    f * sin(f * std::numbers::pi_v<float>))) +
-                       0.5;
+                       0.5f;
             }
         };
 
@@ -1828,22 +1901,24 @@ class Application
         constexpr float speed = 2.0f;
         const float direction =
             (std::fmod(time * speed, 2 * parts) <= parts) ? 1.0f : -1.0f;
-        const float part      = std::fmod(time * speed, parts);
-        const float ipart     = std::floor(part);
-        const float dpart     = std::clamp(
+        const float part  = std::fmod(time * speed, parts);
+        const float ipart = std::floor(part);
+        const float dpart = std::clamp(
             0.5f + 1.33f * (std::fmod(part, 1.0f) - 0.5f), 0.0f, 1.0f);
 
         const float angle =
             direction * (ipart + std::lerp(dpart, elastic_turn(dpart), 0.25f)) *
             glm::radians(360.0f / parts);
-        const float scale = 0.5f - 0.05f * std::sin(dpart * std::numbers::pi_v<float>);
+        const float scale =
+            0.5f - 0.05f * std::sin(dpart * std::numbers::pi_v<float>);
 
         const UniformBufferObject ubo = {
             .model = glm::scale(
                 glm::rotate(mat4(1.0f), angle, vec3(0.0f, 0.0f, 1.0f)),
                 vec3(scale, scale, 1.0f)),
             .view = glm::identity<mat4>(),
-            .proj = glm::ortho(-aspect_ratio, aspect_ratio, -1.0f, 1.0f)};
+            .proj = glm::orthoRH_ZO(-aspect_ratio, aspect_ratio, 1.0f, -1.0f, -1.0f, 2.0f),
+        };
 
         void *data = nullptr;
         vkMapMemory(device_, uniform_buffers_memory_.at(current_image), 0,
@@ -1950,6 +2025,173 @@ class Application
         }
 
         return image_view;
+    }
+
+    static VkFormat find_supported_format(
+        VkPhysicalDevice physical_device,
+        const std::vector<VkFormat> &candidates, VkImageTiling tiling,
+        VkFormatFeatureFlags features)
+    {
+        for (const VkFormat format : candidates)
+        {
+            VkFormatProperties props = {};
+            vkGetPhysicalDeviceFormatProperties(physical_device, format,
+                                                &props);
+
+            if (tiling == VK_IMAGE_TILING_LINEAR &&
+                (props.linearTilingFeatures & features) == features)
+            {
+                return format;
+            }
+            else if (tiling == VK_IMAGE_TILING_OPTIMAL &&
+                     (props.optimalTilingFeatures & features) == features)
+            {
+                return format;
+            }
+        }
+
+        throw std::runtime_error("Failed to find supported format!");
+    }
+
+    static VkFormat find_depth_format(VkPhysicalDevice physical_device)
+    {
+        return find_supported_format(
+            physical_device,
+            {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT,
+             VK_FORMAT_D24_UNORM_S8_UINT},
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
+    }
+
+    static constexpr bool has_stencil_component(VkFormat format)
+    {
+        return format == VK_FORMAT_D32_SFLOAT_S8_UINT ||
+               format == VK_FORMAT_D24_UNORM_S8_UINT;
+    }
+
+    // Supported layout transitions are:
+    //     VK_IMAGE_LAYOUT_UNDEFINED ->
+    //         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+    //     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ->
+    //         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+    //     VK_IMAGE_LAYOUT_UNDEFINED ->
+    //         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+    void transition_image_layout(VkImage image, VkFormat format,
+                                 VkImageLayout old_layout,
+                                 VkImageLayout new_layout)
+    {
+        Expects(
+            (old_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
+             new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) ||
+            (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+             new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) ||
+            (old_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
+             new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL));
+
+        VkCommandBuffer command_buffer = begin_single_time_commands(device_, command_pool_);
+
+        const VkImageAspectFlags aspect_mask =
+            new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+                ? (VK_IMAGE_ASPECT_DEPTH_BIT |
+                   (has_stencil_component(format) ? VK_IMAGE_ASPECT_STENCIL_BIT
+                                                  : 0))
+                : VK_IMAGE_ASPECT_COLOR_BIT;
+
+        VkImageMemoryBarrier barrier = {
+            .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .oldLayout           = old_layout,
+            .newLayout           = new_layout,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image               = image,
+            .subresourceRange =
+                {
+                    .aspectMask     = aspect_mask,
+                    .baseMipLevel   = 0,
+                    .levelCount     = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount     = 1,
+                },
+        };
+
+        VkPipelineStageFlags source_stage      = {};
+        VkPipelineStageFlags destination_stage = {};
+        if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
+            new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+        {
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            source_stage          = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            destination_stage     = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        }
+        else if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+                 new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+        {
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            source_stage          = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            destination_stage     = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        }
+        else if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
+                 new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+        {
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask =
+                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            source_stage      = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            destination_stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        }
+        else
+        {
+            throw std::invalid_argument("Unsupported layout transition!");
+        }
+
+        vkCmdPipelineBarrier(command_buffer, source_stage, destination_stage, 0,
+                             0, nullptr, 0, nullptr, 1, &barrier);
+
+        end_single_time_commands(device_, command_pool_, graphics_queue_,
+                                 command_buffer);
+    }
+
+    static VkCommandBuffer begin_single_time_commands(
+        VkDevice device, VkCommandPool command_pool) noexcept
+    {
+        const VkCommandBufferAllocateInfo alloc_info = {
+            .sType       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = command_pool,
+            .level       = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+
+        VkCommandBuffer command_buffer = {};
+        vkAllocateCommandBuffers(device, &alloc_info, &command_buffer);
+
+        const VkCommandBufferBeginInfo begin_info = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        };
+
+        vkBeginCommandBuffer(command_buffer, &begin_info);
+
+        return command_buffer;
+    }
+
+    static void end_single_time_commands(
+        VkDevice device, VkCommandPool command_pool, VkQueue graphics_queue,
+        VkCommandBuffer command_buffer) noexcept
+    {
+        vkEndCommandBuffer(command_buffer);
+
+        const VkSubmitInfo submit_info = {
+            .sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1,
+            .pCommandBuffers    = &command_buffer,
+        };
+        vkQueueSubmit(graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
+        vkQueueWaitIdle(graphics_queue);
+
+        vkFreeCommandBuffers(device, command_pool, 1, &command_buffer);
     }
 };
 
