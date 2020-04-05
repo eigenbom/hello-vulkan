@@ -8,7 +8,7 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
-#define GLM_FORCE_LEFT_HANDED
+// #define GLM_FORCE_LEFT_HANDED
 #define GLM_FORCE_PURE
 
 #include <GLFW/glfw3.h>
@@ -208,18 +208,45 @@ class Application
     static constexpr std::array<const char *, 1> device_extensions_ = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
-    // Two equilateral triangles, the first on top of the second
-    static inline std::array<Vertex, 6> vertices_ = {{
-        {{1.0f, 0.0f, 0.25f}, Colours::red},
-        {{-0.5f, 0.86f, 0.25f}, Colours::red},
-        {{-0.5f, -0.86f, 0.25f}, Colours::red},
-
-        {{-1.0f, 0.0f, 0.5f}, Colours::blue},
-        {{0.5f, -0.86f, 0.5f}, Colours::blue},
-        {{0.5f, 0.86f, 0.5f}, Colours::blue},
+    static constexpr std::array<vec3, 6> pos = {{
+        {-1.0f, 0.0f, -1.0f},
+        {1.0f, 0.0f, -1.0f},
+        {1.0f, 0.0f, 1.0f},
+        {-1.0f, 0.0f, 1.0f},
+        {0.0f, 1.73f, 0.0f},
+        {0.0f, -1.73f, 0.0f},
     }};
 
-    static inline std::array<uint16_t, 6> indices_ = {{0, 1, 2, 3, 4, 5}};
+    static inline std::array<Vertex, 24> vertices_ = {{
+        {pos.at(0), Colours::red},    {pos.at(1), Colours::red},
+        {pos.at(4), Colours::red},
+
+        {pos.at(1), Colours::yellow}, {pos.at(2), Colours::yellow},
+        {pos.at(4), Colours::yellow},
+
+        {pos.at(2), Colours::blue},   {pos.at(3), Colours::blue},
+        {pos.at(4), Colours::blue},
+
+        {pos.at(3), Colours::light},  {pos.at(0), Colours::light},
+        {pos.at(4), Colours::light},
+
+        {pos.at(0), Colours::blue},   {pos.at(5), Colours::blue},
+        {pos.at(1), Colours::blue},
+
+        {pos.at(1), Colours::light},  {pos.at(5), Colours::light},
+        {pos.at(2), Colours::light},
+
+        {pos.at(2), Colours::red},   {pos.at(5), Colours::red},
+        {pos.at(3), Colours::red},
+
+        {pos.at(3), Colours::yellow}, {pos.at(5), Colours::yellow},
+        {pos.at(0), Colours::yellow},
+    }};
+
+    static inline std::array<uint16_t, 24> indices_ = {{
+        0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
+        12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+    }};
 
     GLFWwindow *window_                                  = nullptr;
     VkInstance instance_                                 = nullptr;
@@ -1940,28 +1967,29 @@ class Application
             }
         };
 
-        constexpr float parts = 6.0f;
+        constexpr float parts = 8.0f;
         constexpr float speed = 2.0f;
         const float direction =
             (std::fmod(time * speed, 2 * parts) <= parts) ? 1.0f : -1.0f;
         const float part  = std::fmod(time * speed, parts);
         const float ipart = std::floor(part);
         const float dpart = std::clamp(
-            0.5f + 1.8f * (std::fmod(part, 1.0f) - 0.5f), 0.0f, 1.0f);
+            0.5f + 3.8f * (std::fmod(part, 1.0f) - 0.5f), 0.0f, 1.0f);
 
         const float angle =
             direction * (ipart + std::lerp(dpart, elastic_turn(dpart), 0.25f)) *
             glm::radians(360.0f / parts);
         const float scale =
-            0.75f - 0.035f * std::sin(dpart * std::numbers::pi_v<float>);
+            0.95f - 0.05f * std::sin(dpart * std::numbers::pi_v<float>);
 
-        const UniformBufferObject ubo = {
+        UniformBufferObject ubo = {
             .model = glm::scale(
-                glm::rotate(mat4(1.0f), angle, vec3(0.0f, 0.0f, 1.0f)),
-                vec3(scale, scale, 1.0f)),
-            .view = glm::identity<mat4>(),
-            .proj = glm::ortho(-aspect_ratio, aspect_ratio, 1.0f, -1.0f, 0.01f,
-                               1.1f),
+                glm::rotate(mat4(1.0f), angle, vec3(0.0f, 1.0f, 0.0f)),
+                vec3(scale, scale, scale)),
+            .view = glm::lookAt(vec3(0.0f, 0.5f, -3.0f), vec3(0.0f, 0.0f, 0.0f),
+                                vec3(0.0f, -1.0f, 0.0f)), // NB: Reverse y due to opengl/vulkan differences
+            .proj = glm::perspective(glm::radians(70.0f), aspect_ratio, 0.01f,
+                                     10.0f),
         };
 
         void *data = nullptr;
