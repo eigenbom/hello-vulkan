@@ -217,30 +217,39 @@ class Application
         {0.0f, -1.73f, 0.0f},
     }};
 
+    static constexpr float darken_factor           = 0.75f;
     static inline std::array<Vertex, 24> vertices_ = {{
-        {pos.at(0), Colours::red},    {pos.at(1), Colours::red},
+        {pos.at(0), Colours::red},
+        {pos.at(1), Colours::red},
         {pos.at(4), Colours::red},
 
-        {pos.at(1), Colours::yellow}, {pos.at(2), Colours::yellow},
+        {pos.at(1), Colours::yellow},
+        {pos.at(2), Colours::yellow},
         {pos.at(4), Colours::yellow},
 
-        {pos.at(2), Colours::blue},   {pos.at(3), Colours::blue},
+        {pos.at(2), Colours::blue},
+        {pos.at(3), Colours::blue},
         {pos.at(4), Colours::blue},
 
-        {pos.at(3), Colours::light},  {pos.at(0), Colours::light},
+        {pos.at(3), Colours::light},
+        {pos.at(0), Colours::light},
         {pos.at(4), Colours::light},
 
-        {pos.at(0), Colours::blue},   {pos.at(5), Colours::blue},
-        {pos.at(1), Colours::blue},
+        {pos.at(0), Colours::blue * darken_factor},
+        {pos.at(5), Colours::blue * darken_factor},
+        {pos.at(1), Colours::blue * darken_factor},
 
-        {pos.at(1), Colours::light},  {pos.at(5), Colours::light},
-        {pos.at(2), Colours::light},
+        {pos.at(1), Colours::light * darken_factor},
+        {pos.at(5), Colours::light * darken_factor},
+        {pos.at(2), Colours::light * darken_factor},
 
-        {pos.at(2), Colours::red},   {pos.at(5), Colours::red},
-        {pos.at(3), Colours::red},
+        {pos.at(2), Colours::red * darken_factor},
+        {pos.at(5), Colours::red * darken_factor},
+        {pos.at(3), Colours::red * darken_factor},
 
-        {pos.at(3), Colours::yellow}, {pos.at(5), Colours::yellow},
-        {pos.at(0), Colours::yellow},
+        {pos.at(3), Colours::yellow * darken_factor},
+        {pos.at(5), Colours::yellow * darken_factor},
+        {pos.at(0), Colours::yellow * darken_factor},
     }};
 
     static inline std::array<uint16_t, 24> indices_ = {{
@@ -1967,7 +1976,7 @@ class Application
             }
         };
 
-        constexpr float parts = 8.0f;
+        constexpr float parts = 4.0f;
         constexpr float speed = 2.0f;
         const float direction =
             (std::fmod(time * speed, 2 * parts) <= parts) ? 1.0f : -1.0f;
@@ -1983,11 +1992,13 @@ class Application
             0.95f - 0.05f * std::sin(dpart * std::numbers::pi_v<float>);
 
         UniformBufferObject ubo = {
-            .model = glm::scale(
-                glm::rotate(mat4(1.0f), angle, vec3(0.0f, 1.0f, 0.0f)),
+            .model = glm::scale(glm::rotate(mat4(1.0f), glm::radians(45.0f) + angle,
+                                            vec3(0.0f, 1.0f, 0.0f)),
                 vec3(scale, scale, scale)),
-            .view = glm::lookAt(vec3(0.0f, 0.5f, -3.0f), vec3(0.0f, 0.0f, 0.0f),
-                                vec3(0.0f, -1.0f, 0.0f)), // NB: Reverse y due to opengl/vulkan differences
+            .view = glm::lookAt(
+                vec3(0.0f, 0.5f, -3.0f), vec3(0.0f, 0.0f, 0.0f),
+                vec3(0.0f, -1.0f,
+                     0.0f)), // NB: Reverse y due to opengl/vulkan differences
             .proj = glm::perspective(glm::radians(70.0f), aspect_ratio, 0.01f,
                                      10.0f),
         };
