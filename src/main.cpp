@@ -9,6 +9,7 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_LEFT_HANDED
+#define GLM_FORCE_PURE
 
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
@@ -165,15 +166,32 @@ static constexpr vec4 rgba_to_vec4(uint32_t rgba) noexcept
     };
 }
 
+static float srgb_to_linear(float cs) noexcept
+{
+    if (cs <= 0.04045f)
+        return cs / 12.92f;
+    else
+        return std::pow((cs + 0.055f) / 1.055f, 2.4f);
+}
+
+static vec4 srgb_to_linear(vec4 colour) noexcept
+{
+    return {
+        srgb_to_linear(colour.r),
+        srgb_to_linear(colour.g),
+        srgb_to_linear(colour.b),
+        colour.a,
+    };
+}
+
 namespace Colours
 {
 
-static constexpr vec4 red    = rgba_to_vec4(0xfe4a49ff);
-static constexpr vec4 blue   = rgba_to_vec4(0x2ab7caff);
-static constexpr vec4 yellow = rgba_to_vec4(0xfed766ff);
-
-static constexpr vec4 light   = rgba_to_vec4(0xe6e6eaff);
-static constexpr vec4 lighter = rgba_to_vec4(0xf4f4f8ff);
+static inline vec4 red    = srgb_to_linear(rgba_to_vec4(0xfe4a49ff));
+static inline vec4 blue   = srgb_to_linear(rgba_to_vec4(0x2ab7caff));
+static inline vec4 yellow = srgb_to_linear(rgba_to_vec4(0xfed766ff));
+static inline vec4 light   = srgb_to_linear(rgba_to_vec4(0xe6e6eaff));
+static inline vec4 lighter = srgb_to_linear(rgba_to_vec4(0xf4f4f8ff));
 
 } // namespace Colours
 
@@ -191,7 +209,7 @@ class Application
         VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
     // Two equilateral triangles, the first on top of the second
-    static constexpr std::array<Vertex, 6> vertices_ = {{
+    static inline std::array<Vertex, 6> vertices_ = {{
         {{1.0f, 0.0f, 0.25f}, Colours::red},
         {{-0.5f, 0.86f, 0.25f}, Colours::red},
         {{-0.5f, -0.86f, 0.25f}, Colours::red},
@@ -201,7 +219,7 @@ class Application
         {{0.5f, 0.86f, 0.5f}, Colours::blue},
     }};
 
-    static constexpr std::array<uint16_t, 6> indices_ = {{0, 1, 2, 3, 4, 5}};
+    static inline std::array<uint16_t, 6> indices_ = {{0, 1, 2, 3, 4, 5}};
 
     GLFWwindow *window_                                  = nullptr;
     VkInstance instance_                                 = nullptr;
@@ -1218,10 +1236,10 @@ class Application
                     "Failed to begin recording command buffer!");
             }
 
-            constexpr auto bg = Colours::lighter;
+            const auto bg = Colours::lighter;
             const std::array<VkClearValue, 3> clear_values = {{
                 {bg.r, bg.g, bg.b, bg.a},
-                {bg.r, bg.g, bg.b, bg.a},
+                {0.0f},
                 {1.0f},
             }};
 
@@ -1614,7 +1632,6 @@ class Application
         const std::vector<VkSurfaceFormatKHR> &available_formats)
     {
         Expects(!available_formats.empty());
-
         for (const auto &format : available_formats)
         {
             if (format.format == VK_FORMAT_B8G8R8A8_SRGB &&
