@@ -276,6 +276,14 @@ class Application
     VkDeviceMemory depth_image_memory_                   = VK_NULL_HANDLE;
     VkImageView depth_image_view_                        = VK_NULL_HANDLE;
 
+    struct Texture    
+    {
+        VkImage image_;
+        VkDeviceMemory device_memory_;
+        VkImageView image_view_;
+        VkSampler sampler_;
+    };
+
     using Texture = std::tuple<VkImage, VkDeviceMemory, VkImageView, VkSampler>;
     std::vector<Texture> textures_                 = {};
     std::map<std::string, uint32_t> texture_names_ = {};
