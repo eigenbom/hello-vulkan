@@ -258,10 +258,11 @@ class Application
     int current_frame_                                   = 0;
     bool framebuffer_resized_                            = false;
     VkDebugUtilsMessengerEXT debug_messenger_            = VK_NULL_HANDLE;
-    VkBuffer vertex_buffer_                              = VK_NULL_HANDLE;
-    VkDeviceMemory vertex_buffer_memory_                 = VK_NULL_HANDLE;
-    VkBuffer index_buffer_                               = VK_NULL_HANDLE;
-    VkDeviceMemory index_buffer_memory_                  = VK_NULL_HANDLE;
+    std::vector<VkBuffer> vertex_buffers_                = {};
+    std::vector<VkDeviceMemory> vertex_buffer_memory_    = {};
+    std::vector<VkBuffer> index_buffers_                 = {};
+    std::vector<VkDeviceMemory> index_buffer_memory_     = {};
+    std::vector<uint16_t> index_buffer_counts_           = {};
     std::vector<VkBuffer> uniform_buffers_               = {};
     std::vector<VkDeviceMemory> uniform_buffers_memory_  = {};
     VkDescriptorPool descriptor_pool_                    = {};
@@ -272,7 +273,6 @@ class Application
     VkImage depth_image_                                 = VK_NULL_HANDLE;
     VkDeviceMemory depth_image_memory_                   = VK_NULL_HANDLE;
     VkImageView depth_image_view_                        = VK_NULL_HANDLE;
-    uint32_t indice_count_                               = 0;
     VkImage texture_image_                               = VK_NULL_HANDLE;
     VkDeviceMemory texture_image_memory_                 = VK_NULL_HANDLE;
     VkImageView texture_image_view_                      = VK_NULL_HANDLE;
@@ -326,11 +326,8 @@ class Application
         create_command_pool();
         create_colour_resources();
         create_depth_resources();
-        create_texture_image();
-        create_texture_image_view();
-        create_texture_sampler();
         create_framebuffers();
-        create_vertex_and_index_buffers();
+        create_mesh();
         create_uniform_buffers();
         create_descriptor_pool();
         create_descriptor_sets();
@@ -393,14 +390,27 @@ class Application
         texture_image_memory_ = VK_NULL_HANDLE;
         vkDestroyDescriptorSetLayout(device_, descriptor_set_layout_, nullptr);
         descriptor_set_layout_ = VK_NULL_HANDLE;
-        vkDestroyBuffer(device_, index_buffer_, nullptr);
-        index_buffer_ = VK_NULL_HANDLE;
-        vkFreeMemory(device_, index_buffer_memory_, nullptr);
-        index_buffer_memory_ = VK_NULL_HANDLE;
-        vkDestroyBuffer(device_, vertex_buffer_, nullptr);
-        vertex_buffer_ = VK_NULL_HANDLE;
-        vkFreeMemory(device_, vertex_buffer_memory_, nullptr);
-        vertex_buffer_memory_ = VK_NULL_HANDLE;
+        for (auto buffer : index_buffers_)
+        {
+            vkDestroyBuffer(device_, buffer, nullptr);
+        }
+        index_buffers_.clear();
+        for (auto memory : index_buffer_memory_)
+        {
+            vkFreeMemory(device_, memory, nullptr);
+        }
+        index_buffer_memory_.clear();
+        index_buffer_counts_.clear();
+        for (auto buffer : vertex_buffers_)
+        {
+            vkDestroyBuffer(device_, buffer, nullptr);
+        }
+        vertex_buffers_.clear();
+        for (auto memory : vertex_buffer_memory_)
+        {
+            vkFreeMemory(device_, memory, nullptr);
+        }
+        vertex_buffer_memory_.clear();
         for (auto semaphore : render_finished_semaphores_)
         {
             vkDestroySemaphore(device_, semaphore, nullptr);
@@ -1039,95 +1049,9 @@ class Application
             device_, depth_image_, depth_format, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
 
         transition_image_layout(
-            depth_image_, depth_format, VK_IMAGE_LAYOUT_UNDEFINED,
+            device_, command_pool_, graphics_queue_, depth_image_, depth_format,
+            VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-    }
-
-    void create_texture_image()
-    {
-        static const std::string filename = "textures/grass.png";
-        int tex_width                     = 0;
-        int tex_height                    = 0;
-        int tex_channels                  = 0;
-        auto *pixels = stbi_load(filename.c_str(), &tex_width, &tex_height,
-                                 &tex_channels, STBI_rgb_alpha);
-        if (pixels == nullptr || tex_width == 0 || tex_height == 0)
-        {
-            throw std::runtime_error(
-                fmt::format("Failed to load texture \"{}\"!", filename));
-        }
-
-        const VkDeviceSize image_size =
-            narrow_cast<VkDeviceSize>(tex_width) * tex_height * 4;
-
-        const auto [staging_buffer, staging_buffer_memory] =
-            create_buffer(physical_device_, device_, image_size,
-                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-        void *data = nullptr;
-        vkMapMemory(device_, staging_buffer_memory, 0, image_size, 0, &data);
-        std::memcpy(data, pixels, narrow_cast<std::size_t>(image_size));
-        vkUnmapMemory(device_, staging_buffer_memory);
-
-        stbi_image_free(pixels);
-
-        std::tie(texture_image_, texture_image_memory_) = create_image(
-            physical_device_, device_, tex_width, tex_height,
-            VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB,
-            VK_IMAGE_TILING_OPTIMAL,
-            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-        transition_image_layout(texture_image_, VK_FORMAT_R8G8B8A8_SRGB,
-                                VK_IMAGE_LAYOUT_UNDEFINED,
-                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-
-        copy_buffer_to_image(staging_buffer, texture_image_, tex_width,
-                             tex_height);
-
-        transition_image_layout(texture_image_, VK_FORMAT_R8G8B8A8_SRGB,
-                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-        vkDestroyBuffer(device_, staging_buffer, nullptr);
-        vkFreeMemory(device_, staging_buffer_memory, nullptr);
-    }
-
-    void create_texture_image_view()
-    {
-        texture_image_view_ =
-            create_image_view(device_, texture_image_, VK_FORMAT_R8G8B8A8_SRGB,
-                              VK_IMAGE_ASPECT_COLOR_BIT, 1);
-    }
-
-    void create_texture_sampler()
-    {
-        const VkSamplerCreateInfo sampler_info = {
-            .sType                   = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-            .magFilter               = VK_FILTER_LINEAR,
-            .minFilter               = VK_FILTER_LINEAR,
-            .mipmapMode              = VK_SAMPLER_MIPMAP_MODE_LINEAR,
-            .addressModeU            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-            .addressModeV            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-            .addressModeW            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-            .mipLodBias              = 0.0f,
-            .anisotropyEnable        = VK_TRUE,
-            .maxAnisotropy           = 16,
-            .compareEnable           = VK_FALSE,
-            .compareOp               = VK_COMPARE_OP_ALWAYS,
-            .minLod                  = 0.0f,
-            .maxLod                  = 0.0f,
-            .borderColor             = VK_BORDER_COLOR_INT_OPAQUE_WHITE,
-            .unnormalizedCoordinates = VK_FALSE,
-        };
-
-        if (vkCreateSampler(device_, &sampler_info, nullptr,
-                            &texture_sampler_) != VK_SUCCESS)
-        {
-            throw std::runtime_error("Failed to create texture sampler!");
-        }
     }
 
     void create_framebuffers()
@@ -1176,30 +1100,35 @@ class Application
         }
     }
 
-    void create_vertex_and_index_buffers()
+    void create_mesh()
     {
         // Load data
-        // auto [vertices, indices] = create_octahedron();
-        // auto [vertices, indices] = create_cube();
-        // auto [vertices, indices] = create_grass_block();
+        // auto mesh = create_octahedron();
+        // auto mesh = create_cube();
+        auto mesh = create_grass_block();
 
-        auto [vertices, indices] =
-            load_gltf("assets\\lighthouse\\scene.gltf", mat4());
+        std::tie(texture_image_, texture_image_memory_, texture_image_view_,
+                 texture_sampler_) =
+            create_texture(physical_device_, device_, command_pool_,
+                           graphics_queue_, mesh.texture_name);
 
         /*
         auto [vertices, indices] =
-            load_mesh("assets\\teapot.obj",
+            load_gltf("assets\\lighthouse\\scene.gltf", mat4());
+
+        auto [vertices, indices] =
+            load_mesh("assets\\lighthouse.obj", "assets",
                       glm::scale(glm::translate(glm::mat4(1.0f),
                                                 vec3(0.0f, -0.75f, 0.0f)),
-                                 vec3(0.5f, 0.5f, 0.5f)));
+                                 vec3(0.01f, 0.01f, 0.01f)));
         */
-        indice_count_ = narrow_cast<uint32_t>(indices.size());
 
         // Build buffers
 
         {
             const VkDeviceSize buffer_size =
-                sizeof(Vertex) * narrow_cast<VkDeviceSize>(vertices.size());
+                sizeof(Vertex) *
+                narrow_cast<VkDeviceSize>(mesh.vertices.size());
 
             const auto [staging_buffer, staging_buffer_memory] =
                 create_buffer(physical_device_, device_, buffer_size,
@@ -1210,24 +1139,28 @@ class Application
             void *data = nullptr;
             vkMapMemory(device_, staging_buffer_memory, 0, buffer_size, 0,
                         &data);
-            std::memcpy(data, vertices.data(),
+            std::memcpy(data, mesh.vertices.data(),
                         narrow_cast<std::size_t>(buffer_size));
             vkUnmapMemory(device_, staging_buffer_memory);
 
-            std::tie(vertex_buffer_, vertex_buffer_memory_) =
+            const auto [vertex_buffer, vertex_buffer_memory] =
                 create_buffer(physical_device_, device_, buffer_size,
                               VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-            copy_buffer(staging_buffer, vertex_buffer_, buffer_size);
+            copy_buffer(staging_buffer, vertex_buffer, buffer_size);
             vkDestroyBuffer(device_, staging_buffer, nullptr);
             vkFreeMemory(device_, staging_buffer_memory, nullptr);
+
+            vertex_buffers_.push_back(vertex_buffer);
+            vertex_buffer_memory_.push_back(vertex_buffer_memory);
         }
 
         {
             const VkDeviceSize buffer_size =
-                sizeof(indices[0]) * narrow_cast<VkDeviceSize>(indices.size());
+                sizeof(mesh.indices[0]) *
+                narrow_cast<VkDeviceSize>(mesh.indices.size());
 
             const auto [staging_buffer, staging_buffer_memory] =
                 create_buffer(physical_device_, device_, buffer_size,
@@ -1238,20 +1171,25 @@ class Application
             void *data = nullptr;
             vkMapMemory(device_, staging_buffer_memory, 0, buffer_size, 0,
                         &data);
-            std::memcpy(data, indices.data(),
+            std::memcpy(data, mesh.indices.data(),
                         narrow_cast<std::size_t>(buffer_size));
             vkUnmapMemory(device_, staging_buffer_memory);
 
-            std::tie(index_buffer_, index_buffer_memory_) =
+            const auto [index_buffer, index_buffer_memory] =
                 create_buffer(physical_device_, device_, buffer_size,
                               VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                   VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-            copy_buffer(staging_buffer, index_buffer_, buffer_size);
+            copy_buffer(staging_buffer, index_buffer, buffer_size);
 
             vkDestroyBuffer(device_, staging_buffer, nullptr);
             vkFreeMemory(device_, staging_buffer_memory, nullptr);
+
+            index_buffers_.push_back(index_buffer);
+            index_buffer_memory_.push_back(index_buffer_memory);
+            index_buffer_counts_.push_back(
+                narrow_cast<uint16_t>(mesh.indices.size()));
         }
     }
 
@@ -1418,18 +1356,26 @@ class Application
             vkCmdBindPipeline(command_buffers_[i],
                               VK_PIPELINE_BIND_POINT_GRAPHICS,
                               graphics_pipeline_);
-            const VkBuffer vertex_buffers[] = {vertex_buffer_};
+
+            // TODO: How do we bind the correct texture
+            int mesh_index          = 0;
+            auto vertex_buffer      = vertex_buffers_[mesh_index];
+            auto index_buffer       = index_buffers_[mesh_index];
+            auto index_buffer_count = index_buffer_counts_[mesh_index];
+
+            const VkBuffer vertex_buffers[] = {vertex_buffer};
             const VkDeviceSize offsets[]    = {0};
             vkCmdBindVertexBuffers(command_buffers_[i], 0, 1,
                                    &vertex_buffers[0], &offsets[0]);
-            vkCmdBindIndexBuffer(command_buffers_[i], index_buffer_, 0,
+            vkCmdBindIndexBuffer(command_buffers_[i], index_buffer, 0,
                                  VK_INDEX_TYPE_UINT16);
 
             vkCmdBindDescriptorSets(
                 command_buffers_[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
                 pipeline_layout_, 0, 1, &descriptor_sets_[i], 0, nullptr);
 
-            vkCmdDrawIndexed(command_buffers_[i], indice_count_, 1, 0, 0, 0);
+            vkCmdDrawIndexed(command_buffers_[i], index_buffer_count, 1, 0, 0,
+                             0);
             vkCmdEndRenderPass(command_buffers_[i]);
             if (vkEndCommandBuffer(command_buffers_[i]) != VK_SUCCESS)
             {
@@ -2034,11 +1980,13 @@ class Application
                                  command_buffer);
     }
 
-    void copy_buffer_to_image(VkBuffer buffer, VkImage image, uint32_t width,
-                              uint32_t height) noexcept
+    static void copy_buffer_to_image(VkDevice device,
+                                     VkCommandPool command_pool, VkQueue queue,
+                                     VkBuffer buffer, VkImage image,
+                                     uint32_t width, uint32_t height) noexcept
     {
         VkCommandBuffer command_buffer =
-            begin_single_time_commands(device_, command_pool_);
+            begin_single_time_commands(device, command_pool);
 
         const VkBufferImageCopy region = {
             .bufferOffset      = 0,
@@ -2063,8 +2011,7 @@ class Application
                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
                                &region);
 
-        end_single_time_commands(device_, command_pool_, graphics_queue_,
-                                 command_buffer);
+        end_single_time_commands(device, command_pool, queue, command_buffer);
     }
 
     void update_uniform_buffer(uint32_t current_image)
@@ -2292,9 +2239,12 @@ class Application
     //         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
     //     VK_IMAGE_LAYOUT_UNDEFINED ->
     //         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-    void transition_image_layout(VkImage image, VkFormat format,
-                                 VkImageLayout old_layout,
-                                 VkImageLayout new_layout)
+    static void transition_image_layout(VkDevice device,
+                                        VkCommandPool command_pool,
+                                        VkQueue queue, VkImage image,
+                                        VkFormat format,
+                                        VkImageLayout old_layout,
+                                        VkImageLayout new_layout)
     {
         Expects(
             (old_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
@@ -2305,7 +2255,7 @@ class Application
              new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL));
 
         VkCommandBuffer command_buffer =
-            begin_single_time_commands(device_, command_pool_);
+            begin_single_time_commands(device, command_pool);
 
         const VkImageAspectFlags aspect_mask =
             new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
@@ -2367,8 +2317,7 @@ class Application
         vkCmdPipelineBarrier(command_buffer, source_stage, destination_stage, 0,
                              0, nullptr, 0, nullptr, 1, &barrier);
 
-        end_single_time_commands(device_, command_pool_, graphics_queue_,
-                                 command_buffer);
+        end_single_time_commands(device, command_pool, queue, command_buffer);
     }
 
     static VkCommandBuffer begin_single_time_commands(
@@ -2395,7 +2344,7 @@ class Application
     }
 
     static void end_single_time_commands(
-        VkDevice device, VkCommandPool command_pool, VkQueue graphics_queue,
+        VkDevice device, VkCommandPool command_pool, VkQueue queue,
         VkCommandBuffer command_buffer) noexcept
     {
         vkEndCommandBuffer(command_buffer);
@@ -2405,14 +2354,21 @@ class Application
             .commandBufferCount = 1,
             .pCommandBuffers    = &command_buffer,
         };
-        vkQueueSubmit(graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
-        vkQueueWaitIdle(graphics_queue);
+        vkQueueSubmit(queue, 1, &submit_info, VK_NULL_HANDLE);
+        vkQueueWaitIdle(queue);
 
         vkFreeCommandBuffers(device, command_pool, 1, &command_buffer);
     }
 
-    static std::pair<std::vector<Vertex>, std::vector<uint16_t>>
-    create_octahedron()
+    // Represents a single part of a scene with a single material etc
+    struct MeshObject
+    {
+        std::vector<Vertex> vertices  = {};
+        std::vector<uint16_t> indices = {};
+        std::string texture_name      = {};
+    };
+
+    static MeshObject create_octahedron()
     {
         static constexpr std::array<vec3, 6> pos = {{
             {-1.0f, 0.0f, -1.0f},
@@ -2470,11 +2426,12 @@ class Application
 
         return {
             vertices,
-            indices,
+            indices, 
+            "textures\\moonquest.png",
         };
     }
 
-    static std::pair<std::vector<Vertex>, std::vector<uint16_t>> create_cube()
+    static MeshObject create_cube()
     {
         std::vector<Vertex> vertices;
         std::vector<uint16_t> indices;
@@ -2537,10 +2494,11 @@ class Application
         return {
             vertices,
             indices,
+            "textures\\moonquest.png",
         };
     }
 
-    static std::pair<std::vector<Vertex>, std::vector<uint16_t>>
+    static MeshObject
     create_grass_block()
     {
         std::vector<Vertex> vertices;
@@ -2619,12 +2577,15 @@ class Application
 
         return {
             vertices,
-            indices,
+            indices, 
+            "textures\\grass.png",
         };
     }
 
-    static std::pair<std::vector<Vertex>, std::vector<uint16_t>> load_mesh(
-        const std::string &filename, mat4 transform)
+    /*
+    static MeshObject load_mesh(
+        const std::string &filename, const std::string &material_dir,
+        mat4 transform)
     {
         static constexpr bool debug_load_outlined = false;
 
@@ -2633,9 +2594,9 @@ class Application
         std::vector<tinyobj::material_t> materials;
         std::string warning_message;
         std::string error_message;
-        const bool result =
-            tinyobj::LoadObj(&attrib, &shapes, &materials, &warning_message,
-                             &error_message, filename.c_str());
+        const bool result = tinyobj::LoadObj(
+            &attrib, &shapes, &materials, &warning_message, &error_message,
+            filename.c_str(), material_dir.c_str());
 
         if (!warning_message.empty())
         {
@@ -2657,9 +2618,10 @@ class Application
         std::vector<uint16_t> indices;
 
         // Loop over shapes
-        for (index_t shape_index = 0; shape_index < std::ssize(shapes);
-             ++shape_index)
+        for (index_t shape_index = 0;
+             shape_index < std::min(1, std::ssize(shapes)); ++shape_index)
         {
+
             // Loop over faces(polygon)
             std::size_t index_offset = 0;
             for (gsl::index face_index = 0;
@@ -2791,170 +2753,111 @@ class Application
                 }
 
                 index_offset += vertex_count;
-                // per-face material
-                // shapes[shape_index].mesh.material_ids[face_index];
+
+                shapes[shape_index].mesh.material_ids[face_index];
             }
         }
 
+        Ensures(!vertices.empty());
+        Ensures(!indices.empty());
         return {
             vertices,
             indices,
         };
     }
 
-    // Image loading hook for load_gltf below
-    // Original from tiny_gltf.h
-    static bool LoadImageData(tinygltf::Image *image, const int image_idx,
-                              std::string *err, std::string *warn,
-                              int req_width, int req_height,
-                              const unsigned char *bytes, int size,
-                              void *user_data)
+    */
+
+    static std::tuple<VkImage, VkDeviceMemory, VkImageView, VkSampler>
+    create_texture(VkPhysicalDevice physical_device, VkDevice device,
+                   VkCommandPool command_pool, VkQueue queue,
+                   std::string filename)
     {
-        (void)user_data;
-        (void)warn;
-
-        int w = 0, h = 0, comp = 0, req_comp = 0;
-
-        unsigned char *data = nullptr;
-
-        // force 32-bit textures for common Vulkan compatibility. It appears
-        // that some GPU drivers do not support 24-bit images for Vulkan
-        req_comp       = 4;
-        int bits       = 8;
-        int pixel_type = TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE;
-
-        // It is possible that the image we want to load is a 16bit per channel
-        // image We are going to attempt to load it as 16bit per channel, and if
-        // it worked, set the image data accodingly. We are casting the returned
-        // pointer into unsigned char, because we are representing "bytes". But
-        // we are updating the Image metadata to signal that this image uses 2
-        // bytes (16bits) per channel:
-        if (stbi_is_16_bit_from_memory(bytes, size))
-        {
-            data = reinterpret_cast<unsigned char *>(
-                stbi_load_16_from_memory(bytes, size, &w, &h, &comp, req_comp));
-            if (data)
-            {
-                bits       = 16;
-                pixel_type = TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT;
-            }
-        }
-
-        // at this point, if data is still NULL, it means that the image wasn't
-        // 16bit per channel, we are going to load it as a normal 8bit per
-        // channel mage as we used to do: if image cannot be decoded, ignore
-        // parsing and keep it by its path don't break in this case
-        // FIXME we should only enter this function if the image is embedded. If
-        // image->uri references
-        // an image file, it should be left as it is. Image loading should not
-        // be mandatory (to support other formats)
-        if (!data)
-            data = stbi_load_from_memory(bytes, size, &w, &h, &comp, req_comp);
-        if (!data)
-        {
-            // NOTE: you can use `warn` instead of `err`
-            if (err)
-            {
-                (*err) += "Unknown image format. STB cannot decode image data "
-                          "for image[" +
-                          std::to_string(image_idx) + "] name = \"" +
-                          image->name + "\".\n";
-            }
-            return false;
-        }
-
-        if ((w < 1) || (h < 1))
-        {
-            stbi_image_free(data);
-            if (err)
-            {
-                (*err) += "Invalid image data for image[" +
-                          std::to_string(image_idx) + "] name = \"" +
-                          image->name + "\"\n";
-            }
-            return false;
-        }
-
-        if (req_width > 0)
-        {
-            if (req_width != w)
-            {
-                stbi_image_free(data);
-                if (err)
-                {
-                    (*err) += "Image width mismatch for image[" +
-                              std::to_string(image_idx) + "] name = \"" +
-                              image->name + "\"\n";
-                }
-                return false;
-            }
-        }
-
-        if (req_height > 0)
-        {
-            if (req_height != h)
-            {
-                stbi_image_free(data);
-                if (err)
-                {
-                    (*err) += "Image height mismatch. for image[" +
-                              std::to_string(image_idx) + "] name = \"" +
-                              image->name + "\"\n";
-                }
-                return false;
-            }
-        }
-
-        image->width      = w;
-        image->height     = h;
-        image->component  = req_comp;
-        image->bits       = bits;
-        image->pixel_type = pixel_type;
-        image->image.resize(static_cast<size_t>(w * h * req_comp) *
-                            size_t(bits / 8));
-        std::copy(data, data + w * h * req_comp * (bits / 8),
-                  image->image.begin());
-        stbi_image_free(data);
-
-        return true;
-    }
-
-    static std::pair<std::vector<Vertex>, std::vector<uint16_t>> load_gltf(
-        const std::string &filename, mat4 transform)
-    {
-
-        using namespace tinygltf;
-
-        Model model;
-        TinyGLTF loader;
-        loader.SetImageLoader(LoadImageData, nullptr);
-
-        std::string error;
-        std::string warning;
-        bool result = loader.LoadASCIIFromFile(&model, &error, &warning,
-                                               filename.c_str());
-
-        if (!warning.empty())
-        {
-            log_warn(warning);
-        }
-        if (!error.empty())
-        {
-            log_error(error);
-        }
-
-        if (!result)
+        int tex_width    = 0;
+        int tex_height   = 0;
+        int tex_channels = 0;
+        auto *pixels     = stbi_load(filename.c_str(), &tex_width, &tex_height,
+                                 &tex_channels, STBI_rgb_alpha);
+        if (pixels == nullptr || tex_width == 0 || tex_height == 0)
         {
             throw std::runtime_error(
-                fmt::format("Failed to load gltf \"{}\"!", filename));
+                fmt::format("Failed to load texture \"{}\"!", filename));
         }
 
-        std::vector<Vertex> vertices;
-        std::vector<uint16_t> indices;
+        const VkDeviceSize image_size =
+            narrow_cast<VkDeviceSize>(tex_width) * tex_height * 4;
 
-        Ensures(!vertices.empty());
-        Ensures(!indices.empty());
-        return {vertices, indices};
+        const auto [staging_buffer, staging_buffer_memory] =
+            create_buffer(physical_device, device, image_size,
+                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+        void *data = nullptr;
+        vkMapMemory(device, staging_buffer_memory, 0, image_size, 0, &data);
+        std::memcpy(data, pixels, narrow_cast<std::size_t>(image_size));
+        vkUnmapMemory(device, staging_buffer_memory);
+
+        stbi_image_free(pixels);
+
+        auto [texture_image, texture_image_memory] = create_image(
+            physical_device, device, tex_width, tex_height,
+            VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        transition_image_layout(
+            device, command_pool, queue, texture_image, VK_FORMAT_R8G8B8A8_SRGB,
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        copy_buffer_to_image(device, command_pool, queue, staging_buffer,
+                             texture_image, tex_width, tex_height);
+
+        transition_image_layout(device, command_pool, queue, texture_image,
+                                VK_FORMAT_R8G8B8A8_SRGB,
+                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+        vkDestroyBuffer(device, staging_buffer, nullptr);
+        vkFreeMemory(device, staging_buffer_memory, nullptr);
+
+        auto texture_image_view =
+            create_image_view(device, texture_image, VK_FORMAT_R8G8B8A8_SRGB,
+                              VK_IMAGE_ASPECT_COLOR_BIT, 1);
+
+        const VkSamplerCreateInfo sampler_info = {
+            .sType                   = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter               = VK_FILTER_LINEAR,
+            .minFilter               = VK_FILTER_LINEAR,
+            .mipmapMode              = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+            .addressModeU            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            .addressModeV            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            .addressModeW            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            .mipLodBias              = 0.0f,
+            .anisotropyEnable        = VK_TRUE,
+            .maxAnisotropy           = 16,
+            .compareEnable           = VK_FALSE,
+            .compareOp               = VK_COMPARE_OP_ALWAYS,
+            .minLod                  = 0.0f,
+            .maxLod                  = 0.0f,
+            .borderColor             = VK_BORDER_COLOR_INT_OPAQUE_WHITE,
+            .unnormalizedCoordinates = VK_FALSE,
+        };
+
+        VkSampler texture_sampler;
+        if (vkCreateSampler(device, &sampler_info, nullptr, &texture_sampler) !=
+            VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create texture sampler!");
+        }
+
+        return {
+            texture_image,
+            texture_image_memory,
+            texture_image_view,
+            texture_sampler,
+        };
     }
 };
 
