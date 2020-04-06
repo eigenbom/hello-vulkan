@@ -39,8 +39,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <numbers>
 #include <optional>
@@ -266,6 +266,7 @@ class Application
     std::vector<uint16_t> index_buffer_counts_           = {};
     std::vector<VkBuffer> uniform_buffers_               = {};
     std::vector<VkDeviceMemory> uniform_buffers_memory_  = {};
+    std::vector<uint32_t> texture_indices_ = {};
     VkDescriptorPool descriptor_pool_                    = {};
     std::vector<VkDescriptorSet> descriptor_sets_        = {};
     VkImage colour_image_                                = VK_NULL_HANDLE;
@@ -276,9 +277,9 @@ class Application
     VkImageView depth_image_view_                        = VK_NULL_HANDLE;
 
     using Texture = std::tuple<VkImage, VkDeviceMemory, VkImageView, VkSampler>;
-    std::vector<Texture> textures_      = {};
+    std::vector<Texture> textures_                 = {};
     std::map<std::string, uint32_t> texture_names_ = {};
-    VkSampleCountFlagBits msaa_samples_ = VK_SAMPLE_COUNT_1_BIT;
+    VkSampleCountFlagBits msaa_samples_            = VK_SAMPLE_COUNT_1_BIT;
 
   public:
     void run()
@@ -413,6 +414,7 @@ class Application
             vkFreeMemory(device_, memory, nullptr);
         }
         vertex_buffer_memory_.clear();
+        texture_indices_.clear();
         for (auto semaphore : render_finished_semaphores_)
         {
             vkDestroySemaphore(device_, semaphore, nullptr);
@@ -1111,8 +1113,8 @@ class Application
         const auto meshes =
             load_mesh("assets\\lighthouse.obj", "assets",
                       glm::scale(glm::translate(glm::mat4(1.0f),
-                                                vec3(0.0f, -0.75f, 0.0f)),
-                                 vec3(0.015f, 0.015f, 0.015f)));
+                                                vec3(0.0f, -0.95f, 0.0f)),
+                                 vec3(0.009f, 0.009f, 0.009f)));
 
         // Build buffers
         for (auto mesh : meshes)
@@ -1126,7 +1128,9 @@ class Application
                         create_texture(physical_device_, device_, command_pool_,
                                        graphics_queue_, mesh.texture_name);
                     textures_.push_back(texture);
-                    auto result = texture_names_.emplace(mesh.texture_name, narrow_cast<uint32_t>(textures_.size()));
+                    auto result = texture_names_.emplace(
+                        mesh.texture_name,
+                        narrow_cast<uint32_t>(textures_.size() - 1));
                     it = result.first;
                 }
                 texture_index = it->second;
@@ -1198,6 +1202,8 @@ class Application
                 index_buffer_counts_.push_back(
                     narrow_cast<uint16_t>(mesh.indices.size()));
             }
+
+            texture_indices_.push_back(texture_index);
         }
     }
 
@@ -1221,20 +1227,21 @@ class Application
         const std::array<VkDescriptorPoolSize, 2> pool_sizes = {{
             {
                 .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                .descriptorCount =
-                    narrow_cast<uint32_t>(swap_chain_images_.size()),
+                .descriptorCount = narrow_cast<uint32_t>(
+                    swap_chain_images_.size() * textures_.size()),
             },
 
             {
                 .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                .descriptorCount =
-                    narrow_cast<uint32_t>(swap_chain_images_.size()),
+                .descriptorCount = narrow_cast<uint32_t>(
+                    swap_chain_images_.size() * 
+                    textures_.size()),
             },
         }};
 
         const VkDescriptorPoolCreateInfo pool_info = {
             .sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-            .maxSets       = narrow_cast<uint32_t>(swap_chain_images_.size()),
+            .maxSets       = narrow_cast<uint32_t>(swap_chain_images_.size() * textures_.size()),
             .poolSizeCount = narrow_cast<uint32_t>(pool_sizes.size()),
             .pPoolSizes    = pool_sizes.data(),
         };
@@ -1249,15 +1256,15 @@ class Application
     void create_descriptor_sets()
     {
         const auto swap_chain_count = swap_chain_images_.size();
-        descriptor_sets_.resize(swap_chain_count);
+        const auto texture_count = textures_.size();
+        descriptor_sets_.resize(swap_chain_count * texture_count);
 
-        std::vector<VkDescriptorSetLayout> layouts(swap_chain_count,
-                                                   descriptor_set_layout_);
+        std::vector<VkDescriptorSetLayout> layouts(descriptor_sets_.size(), descriptor_set_layout_);
 
         const VkDescriptorSetAllocateInfo alloc_info = {
             .sType          = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
             .descriptorPool = descriptor_pool_,
-            .descriptorSetCount = narrow_cast<uint32_t>(swap_chain_count),
+            .descriptorSetCount = narrow_cast<uint32_t>(layouts.size()),
             .pSetLayouts        = layouts.data()};
 
         if (vkAllocateDescriptorSets(device_, &alloc_info,
@@ -1268,46 +1275,51 @@ class Application
 
         for (index_t i = 0; i < std::ssize(swap_chain_images_); ++i)
         {
-            const VkDescriptorBufferInfo buffer_info = {
-                .buffer = uniform_buffers_[i],
-                .offset = 0,
-                .range  = sizeof(UniformBufferObject),
-            };
+            for (index_t j = 0; j < std::ssize(textures_); ++j)
+            {
+                const VkDescriptorBufferInfo buffer_info = {
+                    .buffer = uniform_buffers_[i],
+                    .offset = 0,
+                    .range  = sizeof(UniformBufferObject),
+                };
 
-            // TODO: Figure out how to set correct sampler, image_view
-            const int mesh_index = 0;
+                // TODO: Figure out how to set correct sampler, image_view
+                const index_t set_index  = i * textures_.size() + j;
+                const int mesh_index = j;
 
-            const VkDescriptorImageInfo image_info = {
-                .sampler     = std::get<3>(textures_[mesh_index]),
-                .imageView   = std::get<2>(textures_[mesh_index]),
-                .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            };
+                const VkDescriptorImageInfo image_info = {
+                    .sampler     = std::get<3>(textures_[mesh_index]),
+                    .imageView   = std::get<2>(textures_[mesh_index]),
+                    .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                };
 
-            const std::array<VkWriteDescriptorSet, 2> descriptor_writes = {{
-                {
-                    .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                    .dstSet          = descriptor_sets_[i],
-                    .dstBinding      = 0,
-                    .dstArrayElement = 0,
-                    .descriptorCount = 1,
-                    .descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                    .pBufferInfo     = &buffer_info,
-                },
+                const std::array<VkWriteDescriptorSet, 2> descriptor_writes = {{
+                    {
+                        .sType      = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                        .dstSet     = descriptor_sets_[set_index],
+                        .dstBinding = 0,
+                        .dstArrayElement = 0,
+                        .descriptorCount = 1,
+                        .descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                        .pBufferInfo     = &buffer_info,
+                    },
 
-                {
-                    .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                    .dstSet          = descriptor_sets_[i],
-                    .dstBinding      = 1,
-                    .dstArrayElement = 0,
-                    .descriptorCount = 1,
-                    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                    .pImageInfo     = &image_info,
-                },
-            }};
+                    {
+                        .sType      = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                        .dstSet     = descriptor_sets_[set_index],
+                        .dstBinding = 1,
+                        .dstArrayElement = 0,
+                        .descriptorCount = 1,
+                        .descriptorType =
+                            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                        .pImageInfo = &image_info,
+                    },
+                }};
 
-            vkUpdateDescriptorSets(
-                device_, narrow_cast<uint32_t>(descriptor_writes.size()),
-                descriptor_writes.data(), 0, nullptr);
+                vkUpdateDescriptorSets(
+                    device_, narrow_cast<uint32_t>(descriptor_writes.size()),
+                    descriptor_writes.data(), 0, nullptr);
+            }
         }
     }
 
@@ -1368,27 +1380,33 @@ class Application
                               VK_PIPELINE_BIND_POINT_GRAPHICS,
                               graphics_pipeline_);
 
-            // TODO: How do we bind the correct texture 
+            // TODO: How do we bind the correct texture
             // (use descriptor sets with correct texture?)
 
-            int mesh_index          = 0;
-            auto vertex_buffer      = vertex_buffers_[mesh_index];
-            auto index_buffer       = index_buffers_[mesh_index];
-            auto index_buffer_count = index_buffer_counts_[mesh_index];
+            for (index_t mesh_index = 0;
+                 mesh_index < std::ssize(vertex_buffers_); ++mesh_index)
+            {
+                const auto texture_index = texture_indices_[mesh_index];
+                auto vertex_buffer      = vertex_buffers_[mesh_index];
+                auto index_buffer       = index_buffers_[mesh_index];
+                auto index_buffer_count = index_buffer_counts_[mesh_index];
 
-            const VkBuffer vertex_buffers[] = {vertex_buffer};
-            const VkDeviceSize offsets[]    = {0};
-            vkCmdBindVertexBuffers(command_buffers_[i], 0, 1,
-                                   &vertex_buffers[0], &offsets[0]);
-            vkCmdBindIndexBuffer(command_buffers_[i], index_buffer, 0,
-                                 VK_INDEX_TYPE_UINT16);
+                const VkBuffer vertex_buffers[] = {vertex_buffer};
+                const VkDeviceSize offsets[]    = {0};
+                vkCmdBindVertexBuffers(command_buffers_[i], 0, 1,
+                                       &vertex_buffers[0], &offsets[0]);
+                vkCmdBindIndexBuffer(command_buffers_[i], index_buffer, 0,
+                                     VK_INDEX_TYPE_UINT16);
 
-            vkCmdBindDescriptorSets(
-                command_buffers_[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                pipeline_layout_, 0, 1, &descriptor_sets_[i], 0, nullptr);
+                vkCmdBindDescriptorSets(
+                    command_buffers_[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    pipeline_layout_, 0, 1,
+                    &descriptor_sets_[i * textures_.size() + texture_index], 0,
+                    nullptr);
 
-            vkCmdDrawIndexed(command_buffers_[i], index_buffer_count, 1, 0, 0,
-                             0);
+                vkCmdDrawIndexed(command_buffers_[i], index_buffer_count, 1, 0,
+                                 0, 0);
+            }
             vkCmdEndRenderPass(command_buffers_[i]);
             if (vkEndCommandBuffer(command_buffers_[i]) != VK_SUCCESS)
             {
@@ -2083,7 +2101,7 @@ class Application
         }();
 
         const mat4 linear_turn_model_transform =
-            glm::rotate(mat4(1.0f), glm::radians(45.0f) * time * 0.2f,
+            glm::rotate(mat4(1.0f), time * 0.1f,
                         vec3(0.0f, 1.0f, 0.0f));
 
         const mat4 model_transform = linear_turn_model_transform;
@@ -2596,7 +2614,8 @@ class Application
     }
 
     static std::vector<MeshObject> load_mesh(const std::string &filename,
-                                const std::string &material_dir, mat4 transform)
+                                             const std::string &material_dir,
+                                             mat4 transform)
     {
         tinyobj::attrib_t attrib = {};
         std::vector<tinyobj::shape_t> shapes;
@@ -2626,8 +2645,8 @@ class Application
         std::vector<MeshObject> meshes;
 
         // Loop over shapes
-        for (index_t shape_index = 0;
-             shape_index < std::ssize(shapes); ++shape_index)
+        for (index_t shape_index = 0; shape_index < std::ssize(shapes);
+             ++shape_index)
         {
             std::vector<Vertex> vertices;
             std::vector<uint16_t> indices;
@@ -2700,7 +2719,8 @@ class Application
                         {
                             return {
                                 attrib.texcoords[2 * idx.texcoord_index + 0],
-                                1.0f - attrib.texcoords[2 * idx.texcoord_index + 1]};
+                                1.0f - attrib.texcoords[2 * idx.texcoord_index +
+                                                        1]};
                         }
                     }();
 
@@ -2711,18 +2731,14 @@ class Application
                     const vec3 transformed_position =
                         vec3(transform * vec4(vx, vy, vz, 1.0f));
 
-                    vertices.emplace_back(transformed_position, vec3 {red, green, blue}, tex_coord);
+                    vertices.emplace_back(transformed_position,
+                                          vec3 {red, green, blue}, tex_coord);
                 }
                 indices.emplace_back(index_offset);
                 indices.emplace_back(index_offset + 2);
                 indices.emplace_back(index_offset + 1);
 
                 index_offset += vertex_count;
-
-                // TODO: Group all those with same material together
-
-                // log_info("{} -> {}", shape_index,
-                //         shapes[shape_index].mesh.material_ids[face_index]);
             }
 
             // TODO: Support per-face material instead of per-shape
@@ -2730,16 +2746,17 @@ class Application
                 "assets\\{}_baseColor",
                 materials[shapes[shape_index].mesh.material_ids[0]].name);
             std::string texture_name = {};
-            
+
             if (std::filesystem::exists(texture_basename + ".png"))
             {
-                texture_name = texture_basename + ".png";            
+                texture_name = texture_basename + ".png";
             }
             else if (std::filesystem::exists(texture_basename + ".jpg"))
             {
                 texture_name = texture_basename + ".jpg";
             }
-            else {
+            else
+            {
                 log_error("Can't find texture {}", texture_basename);
             }
 
@@ -2749,7 +2766,7 @@ class Application
         }
 
         Ensures(!meshes.empty());
-        return meshes;        
+        return meshes;
     }
 
     static Texture create_texture(VkPhysicalDevice physical_device,
