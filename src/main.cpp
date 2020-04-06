@@ -273,10 +273,9 @@ class Application
     VkImage depth_image_                                 = VK_NULL_HANDLE;
     VkDeviceMemory depth_image_memory_                   = VK_NULL_HANDLE;
     VkImageView depth_image_view_                        = VK_NULL_HANDLE;
-    VkImage texture_image_                               = VK_NULL_HANDLE;
-    VkDeviceMemory texture_image_memory_                 = VK_NULL_HANDLE;
-    VkImageView texture_image_view_                      = VK_NULL_HANDLE;
-    VkSampler texture_sampler_                           = VK_NULL_HANDLE;
+
+    using Texture = std::tuple<VkImage, VkDeviceMemory, VkImageView, VkSampler>;
+    std::vector<Texture> textures_      = {};
     VkSampleCountFlagBits msaa_samples_ = VK_SAMPLE_COUNT_1_BIT;
 
   public:
@@ -380,14 +379,14 @@ class Application
     void cleanup() noexcept
     {
         cleanup_swap_chain();
-        vkDestroySampler(device_, texture_sampler_, nullptr);
-        texture_sampler_ = VK_NULL_HANDLE;
-        vkDestroyImageView(device_, texture_image_view_, nullptr);
-        texture_image_view_ = VK_NULL_HANDLE;
-        vkDestroyImage(device_, texture_image_, nullptr);
-        texture_image_ = VK_NULL_HANDLE;
-        vkFreeMemory(device_, texture_image_memory_, nullptr);
-        texture_image_memory_ = VK_NULL_HANDLE;
+        for (auto texture : textures_)
+        {
+            vkDestroySampler(device_, std::get<3>(texture), nullptr);
+            vkDestroyImageView(device_, std::get<2>(texture), nullptr);
+            vkDestroyImage(device_, std::get<0>(texture), nullptr);
+            vkFreeMemory(device_, std::get<1>(texture), nullptr);
+        }
+        textures_.clear();
         vkDestroyDescriptorSetLayout(device_, descriptor_set_layout_, nullptr);
         descriptor_set_layout_ = VK_NULL_HANDLE;
         for (auto buffer : index_buffers_)
@@ -1105,23 +1104,17 @@ class Application
         // Load data
         // auto mesh = create_octahedron();
         // auto mesh = create_cube();
-        auto mesh = create_grass_block();
-
-        std::tie(texture_image_, texture_image_memory_, texture_image_view_,
-                 texture_sampler_) =
-            create_texture(physical_device_, device_, command_pool_,
-                           graphics_queue_, mesh.texture_name);
-
-        /*
-        auto [vertices, indices] =
-            load_gltf("assets\\lighthouse\\scene.gltf", mat4());
-
-        auto [vertices, indices] =
+        // auto mesh = create_grass_block();
+        const auto mesh =
             load_mesh("assets\\lighthouse.obj", "assets",
                       glm::scale(glm::translate(glm::mat4(1.0f),
                                                 vec3(0.0f, -0.75f, 0.0f)),
-                                 vec3(0.01f, 0.01f, 0.01f)));
-        */
+                                 vec3(0.015f, 0.015f, 0.015f)));
+
+        const auto texture =
+            create_texture(physical_device_, device_, command_pool_,
+                           graphics_queue_, mesh.texture_name);
+        textures_.push_back(texture);
 
         // Build buffers
 
@@ -1266,9 +1259,12 @@ class Application
                 .range  = sizeof(UniformBufferObject),
             };
 
+            // TODO: Figure out how to set correct sampler, image_view
+            const int mesh_index = 0;
+
             const VkDescriptorImageInfo image_info = {
-                .sampler     = texture_sampler_,
-                .imageView   = texture_image_view_,
+                .sampler     = std::get<3>(textures_[mesh_index]),
+                .imageView   = std::get<2>(textures_[mesh_index]),
                 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
             };
 
@@ -2069,10 +2065,11 @@ class Application
                               vec3(scale, scale, scale));
         }();
 
-        const mat4 linear_turn_model_transform = glm::rotate(
-            mat4(1.0f), glm::radians(45.0f) * time * 3, vec3(0.0f, 1.0f, 0.0f));
+        const mat4 linear_turn_model_transform =
+            glm::rotate(mat4(1.0f), glm::radians(45.0f) * time * 0.2f,
+                        vec3(0.0f, 1.0f, 0.0f));
 
-        const mat4 model_transform = stutter_turn_model_transform;
+        const mat4 model_transform = linear_turn_model_transform;
         UniformBufferObject ubo    = {
             .model = model_transform,
             .view  = glm::lookAt(
@@ -2426,7 +2423,7 @@ class Application
 
         return {
             vertices,
-            indices, 
+            indices,
             "textures\\moonquest.png",
         };
     }
@@ -2498,8 +2495,7 @@ class Application
         };
     }
 
-    static MeshObject
-    create_grass_block()
+    static MeshObject create_grass_block()
     {
         std::vector<Vertex> vertices;
         std::vector<uint16_t> indices;
@@ -2577,18 +2573,14 @@ class Application
 
         return {
             vertices,
-            indices, 
+            indices,
             "textures\\grass.png",
         };
     }
 
-    /*
-    static MeshObject load_mesh(
-        const std::string &filename, const std::string &material_dir,
-        mat4 transform)
+    static MeshObject load_mesh(const std::string &filename,
+                                const std::string &material_dir, mat4 transform)
     {
-        static constexpr bool debug_load_outlined = false;
-
         tinyobj::attrib_t attrib = {};
         std::vector<tinyobj::shape_t> shapes;
         std::vector<tinyobj::material_t> materials;
@@ -2635,7 +2627,6 @@ class Application
 
                 vec3 centroid = {0.0f, 0.0f, 0.0f};
                 vec3 normal   = {0.0f, 0.0f, 0.0f};
-                if constexpr (debug_load_outlined)
                 {
                     const auto get_position = [&](int index) noexcept {
                         const auto idx =
@@ -2682,15 +2673,19 @@ class Application
                             attrib.normals[3 * idx.normal_index + 2];
                     }
 
-                    if (idx.texcoord_index != -1)
-                    {
-                        const auto tx =
-                            attrib.texcoords[2 * idx.texcoord_index + 0];
-                        const auto ty =
-                            attrib.texcoords[2 * idx.texcoord_index + 1];
-                    }
+                    const vec2 tex_coord = [&idx, &attrib]() -> vec2 {
+                        if (idx.texcoord_index == -1)
+                        {
+                            return {0, 0};
+                        }
+                        else
+                        {
+                            return {
+                                attrib.texcoords[2 * idx.texcoord_index + 0],
+                                1.0f - attrib.texcoords[2 * idx.texcoord_index + 1]};
+                        }
+                    }();
 
-                    // Optional: vertex colors
                     const auto red   = attrib.colors[3 * idx.vertex_index + 0];
                     const auto green = attrib.colors[3 * idx.vertex_index + 1];
                     const auto blue  = attrib.colors[3 * idx.vertex_index + 2];
@@ -2698,63 +2693,16 @@ class Application
                     const vec3 transformed_position =
                         vec3(transform * vec4(vx, vy, vz, 1.0f));
 
-                    if constexpr (debug_load_outlined)
-                    {
-                        indices.emplace_back(
-                            narrow_cast<uint16_t>(vertices.size()));
-                        vertices.push_back(
-                            {transformed_position, vec3 {0, 0, 0}});
-                    }
-                    else
-                    {
-                        indices.emplace_back(
-                            narrow_cast<uint16_t>(vertices.size()));
-                        vertices.push_back(
-                            {transformed_position, vec3 {red, green, blue}});
-                    }
+                    vertices.emplace_back(transformed_position, vec3 {red, green, blue}, tex_coord);
                 }
-
-                if constexpr (debug_load_outlined)
-                {
-                    for (int vertex_index = 0; vertex_index < vertex_count;
-                         ++vertex_index)
-                    {
-                        // access to vertex
-                        const auto idx =
-                            shapes[shape_index]
-                                .mesh.indices[index_offset + vertex_index];
-                        const auto vx =
-                            attrib.vertices[3 * idx.vertex_index + 0];
-                        const auto vy =
-                            attrib.vertices[3 * idx.vertex_index + 1];
-                        const auto vz =
-                            attrib.vertices[3 * idx.vertex_index + 2];
-
-                        // Optional: vertex colors
-                        const auto red =
-                            attrib.colors[3 * idx.vertex_index + 0];
-                        const auto green =
-                            attrib.colors[3 * idx.vertex_index + 1];
-                        const auto blue =
-                            attrib.colors[3 * idx.vertex_index + 2];
-
-                        vec3 transformed_position =
-                            vec3(transform * vec4(vx, vy, vz, 1.0f));
-                        transformed_position =
-                            centroid +
-                            (transformed_position - centroid) * 1.0f +
-                            normal * 0.1f;
-
-                        indices.emplace_back(
-                            narrow_cast<uint16_t>(vertices.size()));
-                        vertices.push_back(
-                            {transformed_position, vec3 {red, green, blue}});
-                    }
-                }
+                indices.emplace_back(index_offset);
+                indices.emplace_back(index_offset + 2);
+                indices.emplace_back(index_offset + 1);
 
                 index_offset += vertex_count;
 
-                shapes[shape_index].mesh.material_ids[face_index];
+                // TODO: Group all those with same material together
+                // shapes[shape_index].mesh.material_ids[face_index];
             }
         }
 
@@ -2763,15 +2711,13 @@ class Application
         return {
             vertices,
             indices,
+            "assets\\Material_343_baseColor.jpg",
         };
     }
 
-    */
-
-    static std::tuple<VkImage, VkDeviceMemory, VkImageView, VkSampler>
-    create_texture(VkPhysicalDevice physical_device, VkDevice device,
-                   VkCommandPool command_pool, VkQueue queue,
-                   std::string filename)
+    static Texture create_texture(VkPhysicalDevice physical_device,
+                                  VkDevice device, VkCommandPool command_pool,
+                                  VkQueue queue, std::string filename)
     {
         int tex_width    = 0;
         int tex_height   = 0;
