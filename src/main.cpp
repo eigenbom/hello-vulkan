@@ -40,6 +40,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <filesystem>
 #include <iostream>
 #include <numbers>
 #include <optional>
@@ -276,6 +277,7 @@ class Application
 
     using Texture = std::tuple<VkImage, VkDeviceMemory, VkImageView, VkSampler>;
     std::vector<Texture> textures_      = {};
+    std::map<std::string, uint32_t> texture_names_ = {};
     VkSampleCountFlagBits msaa_samples_ = VK_SAMPLE_COUNT_1_BIT;
 
   public:
@@ -387,6 +389,7 @@ class Application
             vkFreeMemory(device_, std::get<1>(texture), nullptr);
         }
         textures_.clear();
+        texture_names_.clear();
         vkDestroyDescriptorSetLayout(device_, descriptor_set_layout_, nullptr);
         descriptor_set_layout_ = VK_NULL_HANDLE;
         for (auto buffer : index_buffers_)
@@ -1102,87 +1105,99 @@ class Application
     void create_mesh()
     {
         // Load data
-        // auto mesh = create_octahedron();
-        // auto mesh = create_cube();
-        // auto mesh = create_grass_block();
-        const auto mesh =
+        // auto meshes = create_octahedron();
+        // auto meshes = create_cube();
+        // auto meshes = create_grass_block();
+        const auto meshes =
             load_mesh("assets\\lighthouse.obj", "assets",
                       glm::scale(glm::translate(glm::mat4(1.0f),
                                                 vec3(0.0f, -0.75f, 0.0f)),
                                  vec3(0.015f, 0.015f, 0.015f)));
 
-        const auto texture =
-            create_texture(physical_device_, device_, command_pool_,
-                           graphics_queue_, mesh.texture_name);
-        textures_.push_back(texture);
-
         // Build buffers
-
+        for (auto mesh : meshes)
         {
-            const VkDeviceSize buffer_size =
-                sizeof(Vertex) *
-                narrow_cast<VkDeviceSize>(mesh.vertices.size());
+            uint32_t texture_index = 0;
+            {
+                auto it = texture_names_.find(mesh.texture_name);
+                if (it == texture_names_.end())
+                {
+                    const auto texture =
+                        create_texture(physical_device_, device_, command_pool_,
+                                       graphics_queue_, mesh.texture_name);
+                    textures_.push_back(texture);
+                    auto result = texture_names_.emplace(mesh.texture_name, narrow_cast<uint32_t>(textures_.size()));
+                    it = result.first;
+                }
+                texture_index = it->second;
+            }
 
-            const auto [staging_buffer, staging_buffer_memory] =
-                create_buffer(physical_device_, device_, buffer_size,
-                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            {
+                const VkDeviceSize buffer_size =
+                    sizeof(Vertex) *
+                    narrow_cast<VkDeviceSize>(mesh.vertices.size());
 
-            void *data = nullptr;
-            vkMapMemory(device_, staging_buffer_memory, 0, buffer_size, 0,
-                        &data);
-            std::memcpy(data, mesh.vertices.data(),
-                        narrow_cast<std::size_t>(buffer_size));
-            vkUnmapMemory(device_, staging_buffer_memory);
+                const auto [staging_buffer, staging_buffer_memory] =
+                    create_buffer(physical_device_, device_, buffer_size,
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-            const auto [vertex_buffer, vertex_buffer_memory] =
-                create_buffer(physical_device_, device_, buffer_size,
-                              VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                void *data = nullptr;
+                vkMapMemory(device_, staging_buffer_memory, 0, buffer_size, 0,
+                            &data);
+                std::memcpy(data, mesh.vertices.data(),
+                            narrow_cast<std::size_t>(buffer_size));
+                vkUnmapMemory(device_, staging_buffer_memory);
 
-            copy_buffer(staging_buffer, vertex_buffer, buffer_size);
-            vkDestroyBuffer(device_, staging_buffer, nullptr);
-            vkFreeMemory(device_, staging_buffer_memory, nullptr);
+                const auto [vertex_buffer, vertex_buffer_memory] =
+                    create_buffer(physical_device_, device_, buffer_size,
+                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-            vertex_buffers_.push_back(vertex_buffer);
-            vertex_buffer_memory_.push_back(vertex_buffer_memory);
-        }
+                copy_buffer(staging_buffer, vertex_buffer, buffer_size);
+                vkDestroyBuffer(device_, staging_buffer, nullptr);
+                vkFreeMemory(device_, staging_buffer_memory, nullptr);
 
-        {
-            const VkDeviceSize buffer_size =
-                sizeof(mesh.indices[0]) *
-                narrow_cast<VkDeviceSize>(mesh.indices.size());
+                vertex_buffers_.push_back(vertex_buffer);
+                vertex_buffer_memory_.push_back(vertex_buffer_memory);
+            }
 
-            const auto [staging_buffer, staging_buffer_memory] =
-                create_buffer(physical_device_, device_, buffer_size,
-                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            {
+                const VkDeviceSize buffer_size =
+                    sizeof(mesh.indices[0]) *
+                    narrow_cast<VkDeviceSize>(mesh.indices.size());
 
-            void *data = nullptr;
-            vkMapMemory(device_, staging_buffer_memory, 0, buffer_size, 0,
-                        &data);
-            std::memcpy(data, mesh.indices.data(),
-                        narrow_cast<std::size_t>(buffer_size));
-            vkUnmapMemory(device_, staging_buffer_memory);
+                const auto [staging_buffer, staging_buffer_memory] =
+                    create_buffer(physical_device_, device_, buffer_size,
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-            const auto [index_buffer, index_buffer_memory] =
-                create_buffer(physical_device_, device_, buffer_size,
-                              VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                                  VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                void *data = nullptr;
+                vkMapMemory(device_, staging_buffer_memory, 0, buffer_size, 0,
+                            &data);
+                std::memcpy(data, mesh.indices.data(),
+                            narrow_cast<std::size_t>(buffer_size));
+                vkUnmapMemory(device_, staging_buffer_memory);
 
-            copy_buffer(staging_buffer, index_buffer, buffer_size);
+                const auto [index_buffer, index_buffer_memory] =
+                    create_buffer(physical_device_, device_, buffer_size,
+                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                      VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-            vkDestroyBuffer(device_, staging_buffer, nullptr);
-            vkFreeMemory(device_, staging_buffer_memory, nullptr);
+                copy_buffer(staging_buffer, index_buffer, buffer_size);
 
-            index_buffers_.push_back(index_buffer);
-            index_buffer_memory_.push_back(index_buffer_memory);
-            index_buffer_counts_.push_back(
-                narrow_cast<uint16_t>(mesh.indices.size()));
+                vkDestroyBuffer(device_, staging_buffer, nullptr);
+                vkFreeMemory(device_, staging_buffer_memory, nullptr);
+
+                index_buffers_.push_back(index_buffer);
+                index_buffer_memory_.push_back(index_buffer_memory);
+                index_buffer_counts_.push_back(
+                    narrow_cast<uint16_t>(mesh.indices.size()));
+            }
         }
     }
 
@@ -1353,7 +1368,9 @@ class Application
                               VK_PIPELINE_BIND_POINT_GRAPHICS,
                               graphics_pipeline_);
 
-            // TODO: How do we bind the correct texture
+            // TODO: How do we bind the correct texture 
+            // (use descriptor sets with correct texture?)
+
             int mesh_index          = 0;
             auto vertex_buffer      = vertex_buffers_[mesh_index];
             auto index_buffer       = index_buffers_[mesh_index];
@@ -2365,7 +2382,7 @@ class Application
         std::string texture_name      = {};
     };
 
-    static MeshObject create_octahedron()
+    static std::vector<MeshObject> create_octahedron()
     {
         static constexpr std::array<vec3, 6> pos = {{
             {-1.0f, 0.0f, -1.0f},
@@ -2421,14 +2438,14 @@ class Application
             12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
         }};
 
-        return {
+        return {{
             vertices,
             indices,
             "textures\\moonquest.png",
-        };
+        }};
     }
 
-    static MeshObject create_cube()
+    static std::vector<MeshObject> create_cube()
     {
         std::vector<Vertex> vertices;
         std::vector<uint16_t> indices;
@@ -2488,14 +2505,14 @@ class Application
             }
         }
 
-        return {
+        return {{
             vertices,
             indices,
             "textures\\moonquest.png",
-        };
+        }};
     }
 
-    static MeshObject create_grass_block()
+    static std::vector<MeshObject> create_grass_block()
     {
         std::vector<Vertex> vertices;
         std::vector<uint16_t> indices;
@@ -2571,14 +2588,14 @@ class Application
             }
         }
 
-        return {
+        return {{
             vertices,
             indices,
             "textures\\grass.png",
-        };
+        }};
     }
 
-    static MeshObject load_mesh(const std::string &filename,
+    static std::vector<MeshObject> load_mesh(const std::string &filename,
                                 const std::string &material_dir, mat4 transform)
     {
         tinyobj::attrib_t attrib = {};
@@ -2606,13 +2623,14 @@ class Application
                 fmt::format("Couldn't load mesh \"{}\"!", filename));
         }
 
-        std::vector<Vertex> vertices;
-        std::vector<uint16_t> indices;
+        std::vector<MeshObject> meshes;
 
         // Loop over shapes
         for (index_t shape_index = 0;
-             shape_index < std::min(1, std::ssize(shapes)); ++shape_index)
+             shape_index < std::ssize(shapes); ++shape_index)
         {
+            std::vector<Vertex> vertices;
+            std::vector<uint16_t> indices;
 
             // Loop over faces(polygon)
             std::size_t index_offset = 0;
@@ -2702,17 +2720,36 @@ class Application
                 index_offset += vertex_count;
 
                 // TODO: Group all those with same material together
-                // shapes[shape_index].mesh.material_ids[face_index];
+
+                // log_info("{} -> {}", shape_index,
+                //         shapes[shape_index].mesh.material_ids[face_index]);
             }
+
+            // TODO: Support per-face material instead of per-shape
+            std::string texture_basename = fmt::format(
+                "assets\\{}_baseColor",
+                materials[shapes[shape_index].mesh.material_ids[0]].name);
+            std::string texture_name = {};
+            
+            if (std::filesystem::exists(texture_basename + ".png"))
+            {
+                texture_name = texture_basename + ".png";            
+            }
+            else if (std::filesystem::exists(texture_basename + ".jpg"))
+            {
+                texture_name = texture_basename + ".jpg";
+            }
+            else {
+                log_error("Can't find texture {}", texture_basename);
+            }
+
+            Ensures(!vertices.empty());
+            Ensures(!indices.empty());
+            meshes.push_back({vertices, indices, texture_name});
         }
 
-        Ensures(!vertices.empty());
-        Ensures(!indices.empty());
-        return {
-            vertices,
-            indices,
-            "assets\\Material_343_baseColor.jpg",
-        };
+        Ensures(!meshes.empty());
+        return meshes;        
     }
 
     static Texture create_texture(VkPhysicalDevice physical_device,
