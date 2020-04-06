@@ -43,6 +43,7 @@
 
 using glm::vec2, glm::vec3, glm::vec4, glm::mat4;
 using index_t = gsl::index;
+using gsl::narrow_cast;
 
 enum class BuildMode
 {
@@ -199,9 +200,9 @@ class Application
     static constexpr int max_frames_in_flight_ = 2;
     static constexpr bool enable_validation_layers_ =
         (gBuildConfig.mode == BuildMode::Debug);
-    static constexpr std::array<const char *, 1> validation_layers_ = {
+    static constexpr std::array validation_layers_ = {
         "VK_LAYER_KHRONOS_validation"};
-    static constexpr std::array<const char *, 1> device_extensions_ = {
+    static constexpr std::array device_extensions_ = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
     GLFWwindow *window_                                  = nullptr;
@@ -248,6 +249,7 @@ class Application
     VkImage texture_image_                               = VK_NULL_HANDLE;
     VkDeviceMemory texture_image_memory_                 = VK_NULL_HANDLE;
     VkImageView texture_image_view_                      = VK_NULL_HANDLE;
+    VkSampler texture_sampler_                           = VK_NULL_HANDLE;
     VkSampleCountFlagBits msaa_samples_ = VK_SAMPLE_COUNT_1_BIT;
 
   public:
@@ -339,6 +341,8 @@ class Application
     void cleanup() noexcept
     {
         cleanup_swap_chain();
+        vkDestroySampler(device_, texture_sampler_, nullptr);
+        texture_sampler_ = VK_NULL_HANDLE;
         vkDestroyImageView(device_, texture_image_view_, nullptr);
         texture_image_view_ = VK_NULL_HANDLE;
         vkDestroyImage(device_, texture_image_, nullptr);
@@ -413,12 +417,12 @@ class Application
             .pApplicationInfo = &app_info,
             .enabledLayerCount =
                 enable_validation_layers_
-                    ? gsl::narrow_cast<uint32_t>(validation_layers_.size())
+                    ? narrow_cast<uint32_t>(validation_layers_.size())
                     : 0u,
             .ppEnabledLayerNames =
                 enable_validation_layers_ ? validation_layers_.data() : nullptr,
             .enabledExtensionCount =
-                gsl::narrow_cast<uint32_t>(required_extensions.size()),
+                narrow_cast<uint32_t>(required_extensions.size()),
             .ppEnabledExtensionNames = required_extensions.data(),
         };
 
@@ -553,26 +557,29 @@ class Application
                 .sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
                 .queueFamilyIndex = family,
                 .queueCount =
-                    gsl::narrow_cast<uint32_t>(std::size(queue_priorities)),
+                    narrow_cast<uint32_t>(std::size(queue_priorities)),
                 .pQueuePriorities = &queue_priorities[0],
             };
             queue_create_infos.push_back(info);
         }
 
-        VkPhysicalDeviceFeatures device_features = {};
-        VkDeviceCreateInfo create_info           = {
+        const VkPhysicalDeviceFeatures device_features = {
+            .samplerAnisotropy = VK_TRUE,
+        };
+
+        VkDeviceCreateInfo create_info = {
             .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
             .queueCreateInfoCount =
-                gsl::narrow_cast<uint32_t>(queue_create_infos.size()),
+                narrow_cast<uint32_t>(queue_create_infos.size()),
             .pQueueCreateInfos = queue_create_infos.data(),
             .enabledLayerCount =
                 enable_validation_layers_
-                    ? gsl::narrow_cast<uint32_t>(validation_layers_.size())
+                    ? narrow_cast<uint32_t>(validation_layers_.size())
                     : 0u,
             .ppEnabledLayerNames =
                 enable_validation_layers_ ? validation_layers_.data() : nullptr,
             .enabledExtensionCount =
-                gsl::narrow_cast<uint32_t>(device_extensions_.size()),
+                narrow_cast<uint32_t>(device_extensions_.size()),
             .ppEnabledExtensionNames = device_extensions_.data(),
             .pEnabledFeatures        = &device_features,
         };
@@ -739,7 +746,7 @@ class Application
             .srcAccessMask = 0,
             .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT};
 
-        const std::array<VkAttachmentDescription, 3> attachments = {
+        const std::array attachments = {
             colour_attachment,
             colour_attachment_resolve,
             depth_attachment,
@@ -747,7 +754,7 @@ class Application
 
         const VkRenderPassCreateInfo render_pass_info = {
             .sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-            .attachmentCount = gsl::narrow_cast<uint32_t>(attachments.size()),
+            .attachmentCount = narrow_cast<uint32_t>(attachments.size()),
             .pAttachments    = attachments.data(),
             .subpassCount    = 1,
             .pSubpasses      = &subpass,
@@ -772,10 +779,23 @@ class Application
             .pImmutableSamplers = nullptr,
         };
 
+        const VkDescriptorSetLayoutBinding sampler_layout_binding = {
+            .binding            = 1,
+            .descriptorType     = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount    = 1,
+            .stageFlags         = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .pImmutableSamplers = nullptr,
+        };
+
+        const std::array bindings = {
+            ubo_layout_binding,
+            sampler_layout_binding,
+        };
+
         const VkDescriptorSetLayoutCreateInfo layout_info = {
             .sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .bindingCount = 1,
-            .pBindings    = &ubo_layout_binding,
+            .bindingCount = narrow_cast<uint32_t>(bindings.size()),
+            .pBindings    = bindings.data(),
         };
 
         if (vkCreateDescriptorSetLayout(device_, &layout_info, nullptr,
@@ -821,7 +841,7 @@ class Application
             .vertexBindingDescriptionCount = 1,
             .pVertexBindingDescriptions    = &binding_description,
             .vertexAttributeDescriptionCount =
-                gsl::narrow_cast<uint32_t>(std::size(attribute_descriptions)),
+                narrow_cast<uint32_t>(std::size(attribute_descriptions)),
             .pVertexAttributeDescriptions = attribute_descriptions.data(),
         };
 
@@ -996,7 +1016,7 @@ class Application
         }
 
         const VkDeviceSize image_size =
-            gsl::narrow_cast<VkDeviceSize>(tex_width) * tex_height * 4;
+            narrow_cast<VkDeviceSize>(tex_width) * tex_height * 4;
 
         const auto [staging_buffer, staging_buffer_memory] =
             create_buffer(physical_device_, device_, image_size,
@@ -1006,7 +1026,7 @@ class Application
 
         void *data = nullptr;
         vkMapMemory(device_, staging_buffer_memory, 0, image_size, 0, &data);
-        std::memcpy(data, pixels, gsl::narrow_cast<std::size_t>(image_size));
+        std::memcpy(data, pixels, narrow_cast<std::size_t>(image_size));
         vkUnmapMemory(device_, staging_buffer_memory);
 
         stbi_image_free(pixels);
@@ -1042,11 +1062,30 @@ class Application
 
     void create_texture_sampler()
     {
-        const VkSamplerCreateInfo sample_info = {
-            .sType     = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-            .magFilter = VK_FILTER_LINEAR,
-            .minFilter = VK_FILTER_LINEAR,
-                    };
+        const VkSamplerCreateInfo sampler_info = {
+            .sType                   = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter               = VK_FILTER_LINEAR,
+            .minFilter               = VK_FILTER_LINEAR,
+            .mipmapMode              = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+            .addressModeU            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            .addressModeV            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            .addressModeW            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            .mipLodBias              = 0.0f,
+            .anisotropyEnable        = VK_TRUE,
+            .maxAnisotropy           = 16,
+            .compareEnable           = VK_FALSE,
+            .compareOp               = VK_COMPARE_OP_ALWAYS,
+            .minLod                  = 0.0f,
+            .maxLod                  = 0.0f,
+            .borderColor             = VK_BORDER_COLOR_INT_OPAQUE_WHITE,
+            .unnormalizedCoordinates = VK_FALSE,
+        };
+
+        if (vkCreateSampler(device_, &sampler_info, nullptr,
+                            &texture_sampler_) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create texture sampler!");
+        }
     }
 
     void create_framebuffers()
@@ -1054,25 +1093,23 @@ class Application
         swap_chain_framebuffers_.resize(swap_chain_image_views_.size());
         for (index_t i = 0; i < std::ssize(swap_chain_image_views_); ++i)
         {
-            const std::array<VkImageView, 3> attachments = {
+            const std::array attachments = {
                 colour_image_view_,
                 swap_chain_image_views_[i],
                 depth_image_view_,
             };
             const VkFramebufferCreateInfo framebuffer_info = {
-                .sType      = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-                .renderPass = render_pass_,
-                .attachmentCount =
-                    gsl::narrow_cast<uint32_t>(attachments.size()),
-                .pAttachments = attachments.data(),
-                .width        = swap_chain_extent_.width,
-                .height       = swap_chain_extent_.height,
-                .layers       = 1,
+                .sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+                .renderPass      = render_pass_,
+                .attachmentCount = narrow_cast<uint32_t>(attachments.size()),
+                .pAttachments    = attachments.data(),
+                .width           = swap_chain_extent_.width,
+                .height          = swap_chain_extent_.height,
+                .layers          = 1,
             };
 
             if (vkCreateFramebuffer(device_, &framebuffer_info, nullptr,
-                                    &swap_chain_framebuffers_[i]) !=
-                VK_SUCCESS)
+                                    &swap_chain_framebuffers_[i]) != VK_SUCCESS)
             {
                 throw std::runtime_error("Failed to create framebuffer!");
             }
@@ -1109,14 +1146,13 @@ class Application
                                                 vec3(0.0f, -0.75f, 0.0f)),
                                  vec3(0.5f, 0.5f, 0.5f)));
         */
-        indice_count_ = gsl::narrow_cast<uint32_t>(indices.size());
+        indice_count_ = narrow_cast<uint32_t>(indices.size());
 
         // Build buffers
 
         {
             const VkDeviceSize buffer_size =
-                sizeof(Vertex) *
-                gsl::narrow_cast<VkDeviceSize>(vertices.size());
+                sizeof(Vertex) * narrow_cast<VkDeviceSize>(vertices.size());
 
             const auto [staging_buffer, staging_buffer_memory] =
                 create_buffer(physical_device_, device_, buffer_size,
@@ -1128,7 +1164,7 @@ class Application
             vkMapMemory(device_, staging_buffer_memory, 0, buffer_size, 0,
                         &data);
             std::memcpy(data, vertices.data(),
-                        gsl::narrow_cast<std::size_t>(buffer_size));
+                        narrow_cast<std::size_t>(buffer_size));
             vkUnmapMemory(device_, staging_buffer_memory);
 
             std::tie(vertex_buffer_, vertex_buffer_memory_) =
@@ -1144,8 +1180,7 @@ class Application
 
         {
             const VkDeviceSize buffer_size =
-                sizeof(indices[0]) *
-                gsl::narrow_cast<VkDeviceSize>(indices.size());
+                sizeof(indices[0]) * narrow_cast<VkDeviceSize>(indices.size());
 
             const auto [staging_buffer, staging_buffer_memory] =
                 create_buffer(physical_device_, device_, buffer_size,
@@ -1157,7 +1192,7 @@ class Application
             vkMapMemory(device_, staging_buffer_memory, 0, buffer_size, 0,
                         &data);
             std::memcpy(data, indices.data(),
-                        gsl::narrow_cast<std::size_t>(buffer_size));
+                        narrow_cast<std::size_t>(buffer_size));
             vkUnmapMemory(device_, staging_buffer_memory);
 
             std::tie(index_buffer_, index_buffer_memory_) =
@@ -1190,17 +1225,25 @@ class Application
 
     void create_descriptor_pool()
     {
-        const VkDescriptorPoolSize pool_size = {
-            .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount =
-                gsl::narrow_cast<uint32_t>(swap_chain_images_.size()),
-        };
+        const std::array<VkDescriptorPoolSize, 2> pool_sizes = {{
+            {
+                .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount =
+                    narrow_cast<uint32_t>(swap_chain_images_.size()),
+            },
+
+            {
+                .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount =
+                    narrow_cast<uint32_t>(swap_chain_images_.size()),
+            },
+        }};
 
         const VkDescriptorPoolCreateInfo pool_info = {
-            .sType   = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-            .maxSets = gsl::narrow_cast<uint32_t>(swap_chain_images_.size()),
-            .poolSizeCount = 1,
-            .pPoolSizes    = &pool_size,
+            .sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .maxSets       = narrow_cast<uint32_t>(swap_chain_images_.size()),
+            .poolSizeCount = narrow_cast<uint32_t>(pool_sizes.size()),
+            .pPoolSizes    = pool_sizes.data(),
         };
 
         if (vkCreateDescriptorPool(device_, &pool_info, nullptr,
@@ -1221,8 +1264,8 @@ class Application
         const VkDescriptorSetAllocateInfo alloc_info = {
             .sType          = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
             .descriptorPool = descriptor_pool_,
-            .descriptorSetCount = gsl::narrow_cast<uint32_t>(swap_chain_count),
-            .pSetLayouts = layouts.data()};
+            .descriptorSetCount = narrow_cast<uint32_t>(swap_chain_count),
+            .pSetLayouts        = layouts.data()};
 
         if (vkAllocateDescriptorSets(device_, &alloc_info,
                                      descriptor_sets_.data()) != VK_SUCCESS)
@@ -1238,17 +1281,35 @@ class Application
                 .range  = sizeof(UniformBufferObject),
             };
 
-            const VkWriteDescriptorSet descriptor_write = {
-                .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet          = descriptor_sets_[i],
-                .dstBinding      = 0,
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                .pBufferInfo     = &buffer_info,
+            const VkDescriptorImageInfo image_info = {
+                .sampler = texture_sampler_,
+                .imageView = texture_image_view_,
+                .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
             };
 
-            vkUpdateDescriptorSets(device_, 1, &descriptor_write, 0, nullptr);
+            const std::array<VkWriteDescriptorSet, 2> descriptor_writes = {{
+                {
+                    .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet          = descriptor_sets_[i],
+                    .dstBinding      = 0,
+                    .dstArrayElement = 0,
+                    .descriptorCount = 1,
+                    .descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                    .pBufferInfo     = &buffer_info,
+                },
+
+                {
+                    .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet          = descriptor_sets_[i],
+                    .dstBinding      = 1,
+                    .dstArrayElement = 0,
+                    .descriptorCount = 1,
+                    .descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                    .pImageInfo     = &image_info,
+                },
+            }};
+
+            vkUpdateDescriptorSets(device_, narrow_cast<uint32_t>(descriptor_writes.size()), descriptor_writes.data(), 0, nullptr);
         }
     }
 
@@ -1261,7 +1322,7 @@ class Application
             .commandPool = command_pool_,
             .level       = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
             .commandBufferCount =
-                gsl::narrow_cast<uint32_t>(command_buffers_.size()),
+                narrow_cast<uint32_t>(command_buffers_.size()),
         };
 
         if (vkAllocateCommandBuffers(device_, &alloc_info,
@@ -1287,6 +1348,7 @@ class Application
 
             const vec4 lighter = srgb_to_linear(rgba_to_vec4(0xf4f4f8ff));
             const auto bg      = lighter;
+
             const std::array<VkClearValue, 3> clear_values = {{
                 {bg.r, bg.g, bg.b, bg.a},
                 {0.0f},
@@ -1298,9 +1360,8 @@ class Application
                 .renderPass  = render_pass_,
                 .framebuffer = swap_chain_framebuffers_[i],
                 .renderArea  = {.offset = {0, 0}, .extent = swap_chain_extent_},
-                .clearValueCount =
-                    gsl::narrow_cast<uint32_t>(clear_values.size()),
-                .pClearValues = clear_values.data(),
+                .clearValueCount = narrow_cast<uint32_t>(clear_values.size()),
+                .pClearValues    = clear_values.data(),
             };
 
             vkCmdBeginRenderPass(command_buffers_[i], &render_pass_info,
@@ -1369,14 +1430,14 @@ class Application
 
     void draw_frame()
     {
-        vkWaitForFences(device_, 1, &in_flight_fences_[current_frame_],
-                        VK_TRUE, UINT64_MAX);
+        vkWaitForFences(device_, 1, &in_flight_fences_[current_frame_], VK_TRUE,
+                        UINT64_MAX);
 
-        uint32_t image_index      = 0;
-        const auto acquire_result = vkAcquireNextImageKHR(
-            device_, swap_chain_, UINT64_MAX,
-            image_available_semaphores_[current_frame_], VK_NULL_HANDLE,
-            &image_index);
+        uint32_t image_index = 0;
+        const auto acquire_result =
+            vkAcquireNextImageKHR(device_, swap_chain_, UINT64_MAX,
+                                  image_available_semaphores_[current_frame_],
+                                  VK_NULL_HANDLE, &image_index);
 
         if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR ||
             acquire_result == VK_SUBOPTIMAL_KHR || framebuffer_resized_)
@@ -1412,13 +1473,13 @@ class Application
         const VkSubmitInfo submit_info = {
             .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
             .waitSemaphoreCount =
-                gsl::narrow_cast<uint32_t>(std::size(wait_semaphores)),
+                narrow_cast<uint32_t>(std::size(wait_semaphores)),
             .pWaitSemaphores    = &wait_semaphores[0],
             .pWaitDstStageMask  = &wait_stages[0],
             .commandBufferCount = 1,
             .pCommandBuffers    = &command_buffers_[image_index],
             .signalSemaphoreCount =
-                gsl::narrow_cast<uint32_t>(std::size(signal_semaphores)),
+                narrow_cast<uint32_t>(std::size(signal_semaphores)),
             .pSignalSemaphores = &signal_semaphores[0],
         };
 
@@ -1436,12 +1497,11 @@ class Application
         const VkPresentInfoKHR present_info = {
             .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .waitSemaphoreCount =
-                gsl::narrow_cast<uint32_t>(std::size(signal_semaphores)),
+                narrow_cast<uint32_t>(std::size(signal_semaphores)),
             .pWaitSemaphores = &signal_semaphores[0],
-            .swapchainCount =
-                gsl::narrow_cast<uint32_t>(std::size(swap_chains)),
-            .pSwapchains   = &swap_chains[0],
-            .pImageIndices = &image_index,
+            .swapchainCount  = narrow_cast<uint32_t>(std::size(swap_chains)),
+            .pSwapchains     = &swap_chains[0],
+            .pImageIndices   = &image_index,
         };
 
         vkQueuePresentKHR(present_queue_, &present_info);
@@ -1482,10 +1542,9 @@ class Application
         uniform_buffers_memory_.clear();
         vkDestroyDescriptorPool(device_, descriptor_pool_, nullptr);
         descriptor_pool_ = VK_NULL_HANDLE;
-        vkFreeCommandBuffers(
-            device_, command_pool_,
-            gsl::narrow_cast<uint32_t>(command_buffers_.size()),
-            command_buffers_.data());
+        vkFreeCommandBuffers(device_, command_pool_,
+                             narrow_cast<uint32_t>(command_buffers_.size()),
+                             command_buffers_.data());
         vkDestroyPipeline(device_, graphics_pipeline_, nullptr);
         vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
         vkDestroyRenderPass(device_, render_pass_, nullptr);
@@ -1560,8 +1619,12 @@ class Application
                    !swap_details.present_modes.empty();
         }();
         const QueueFamilyIndices indices = find_queue_families(device, surface);
+
+        VkPhysicalDeviceFeatures supported_features = {};
+        vkGetPhysicalDeviceFeatures(device, &supported_features);
+
         return indices.is_complete() && extensions_supported &&
-               swap_chain_adequate;
+               swap_chain_adequate && supported_features.samplerAnisotropy;
     }
 
     static bool check_device_extension_support(VkPhysicalDevice device)
@@ -1724,7 +1787,7 @@ class Application
     {
         VkShaderModuleCreateInfo create_info = {
             .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-            .codeSize = gsl::narrow_cast<uint32_t>(code.size()),
+            .codeSize = narrow_cast<uint32_t>(code.size()),
             .pCode    = reinterpret_cast<const uint32_t *>(code.data()),
         };
 
@@ -1967,7 +2030,7 @@ class Application
         }();
 
         const float aspect_ratio =
-            gsl::narrow_cast<float>(swap_chain_extent_.width) /
+            narrow_cast<float>(swap_chain_extent_.width) /
             swap_chain_extent_.height;
 
         const mat4 stutter_turn_model_transform = [&]() {
@@ -2384,7 +2447,7 @@ class Application
 
             for (const bool opposite_face : {false, true})
             {
-                indices.push_back(gsl::narrow_cast<uint16_t>(vertices.size()));
+                indices.push_back(narrow_cast<uint16_t>(vertices.size()));
                 indices.push_back(indices.back() + 1);
                 indices.push_back(indices.back() + 1);
                 indices.push_back(indices.back() + 1);
@@ -2543,14 +2606,14 @@ class Application
                     if constexpr (debug_load_outlined)
                     {
                         indices.emplace_back(
-                            gsl::narrow_cast<uint16_t>(vertices.size()));
+                            narrow_cast<uint16_t>(vertices.size()));
                         vertices.push_back(
                             {transformed_position, vec3 {0, 0, 0}});
                     }
                     else
                     {
                         indices.emplace_back(
-                            gsl::narrow_cast<uint16_t>(vertices.size()));
+                            narrow_cast<uint16_t>(vertices.size()));
                         vertices.push_back(
                             {transformed_position, vec3 {red, green, blue}});
                     }
@@ -2588,7 +2651,7 @@ class Application
                             normal * 0.1f;
 
                         indices.emplace_back(
-                            gsl::narrow_cast<uint16_t>(vertices.size()));
+                            narrow_cast<uint16_t>(vertices.size()));
                         vertices.push_back(
                             {transformed_position, vec3 {red, green, blue}});
                     }
