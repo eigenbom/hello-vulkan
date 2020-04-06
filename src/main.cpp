@@ -203,7 +203,6 @@ class Application
     static constexpr std::array<const char *, 1> device_extensions_ = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
-
     GLFWwindow *window_                                  = nullptr;
     VkInstance instance_                                 = nullptr;
     VkPhysicalDevice physical_device_                    = nullptr;
@@ -338,6 +337,10 @@ class Application
     void cleanup() noexcept
     {
         cleanup_swap_chain();
+        vkDestroyImage(device_, texture_image_, nullptr);
+        texture_image_ = VK_NULL_HANDLE;
+        vkFreeMemory(device_, texture_image_memory_, nullptr);
+        texture_image_memory_ = VK_NULL_HANDLE;
         vkDestroyDescriptorSetLayout(device_, descriptor_set_layout_, nullptr);
         descriptor_set_layout_ = VK_NULL_HANDLE;
         vkDestroyBuffer(device_, index_buffer_, nullptr);
@@ -1044,6 +1047,13 @@ class Application
 
         copy_buffer_to_image(staging_buffer, texture_image_, tex_width,
                              tex_height);
+
+        transition_image_layout(texture_image_, VK_FORMAT_R8G8B8A8_SRGB,
+                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+        vkDestroyBuffer(device_, staging_buffer, nullptr);
+        vkFreeMemory(device_, staging_buffer_memory, nullptr);
     }
 
     void create_framebuffers()
@@ -1293,7 +1303,7 @@ class Application
                 {0.0f},
                 {1.0f},
             }};
-            
+
             const VkRenderPassBeginInfo render_pass_info = {
                 .sType       = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
                 .renderPass  = render_pass_,
@@ -2315,14 +2325,14 @@ class Application
             {0.0f, 1.73f, 0.0f},
             {0.0f, -1.73f, 0.0f},
         }};
-        static constexpr float darken_factor = 0.75f;
-        
+        static constexpr float darken_factor     = 0.75f;
+
         const vec4 red    = srgb_to_linear(rgba_to_vec4(0xfe4a49ff));
         const vec4 blue   = srgb_to_linear(rgba_to_vec4(0x2ab7caff));
         const vec4 yellow = srgb_to_linear(rgba_to_vec4(0xfed766ff));
         const vec4 light  = srgb_to_linear(rgba_to_vec4(0xe6e6eaff));
 
-        const std::vector<Vertex> vertices   = {{
+        const std::vector<Vertex> vertices = {{
             {pos.at(0), red},
             {pos.at(1), red},
             {pos.at(4), red},
