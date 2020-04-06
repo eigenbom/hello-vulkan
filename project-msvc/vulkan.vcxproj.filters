@@ -13,6 +13,9 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="shaders">
+      <UniqueIdentifier>{116ac880-16cc-4610-a45a-7a3f29139306}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\main.cpp">
@@ -23,6 +26,12 @@
     <None Include="packages.config" />
     <None Include="..\.clang-format" />
     <None Include="vulkan.ruleset" />
+    <None Include="..\shaders\shader.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="..\shaders\shader.vert">
+      <Filter>shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\tiny_obj_loader.h">

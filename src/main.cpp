@@ -131,6 +131,13 @@ struct Vertex
 {
     vec3 pos;
     vec3 colour;
+    vec2 tex_coord;
+
+    Vertex(vec3 pos = {0, 0, 0}, vec3 colour = {1, 1, 1},
+           vec2 tex_coord = {0, 0})
+        : pos(pos), colour(colour), tex_coord(tex_coord)
+    {
+    }
 
     static constexpr VkVertexInputBindingDescription
     get_binding_description() noexcept
@@ -140,19 +147,30 @@ struct Vertex
                 .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
     }
 
-    static constexpr std::array<VkVertexInputAttributeDescription, 2>
+    static constexpr std::array<VkVertexInputAttributeDescription, 3>
     get_attribute_descriptions() noexcept
     {
         return {{
-            {.location = 0,
-             .binding  = 0,
-             .format   = VK_FORMAT_R32G32B32_SFLOAT,
-             .offset   = offsetof(Vertex, pos)},
+            {
+                .location = 0,
+                .binding  = 0,
+                .format   = VK_FORMAT_R32G32B32_SFLOAT,
+                .offset   = offsetof(Vertex, pos),
+            },
 
-            {.location = 1,
-             .binding  = 0,
-             .format   = VK_FORMAT_R32G32B32_SFLOAT,
-             .offset   = offsetof(Vertex, colour)},
+            {
+                .location = 1,
+                .binding  = 0,
+                .format   = VK_FORMAT_R32G32B32_SFLOAT,
+                .offset   = offsetof(Vertex, colour),
+            },
+
+            {
+                .location = 2,
+                .binding  = 0,
+                .format   = VK_FORMAT_R32G32_SFLOAT,
+                .offset   = offsetof(Vertex, tex_coord),
+            },
         }};
     }
 };
@@ -1282,8 +1300,8 @@ class Application
             };
 
             const VkDescriptorImageInfo image_info = {
-                .sampler = texture_sampler_,
-                .imageView = texture_image_view_,
+                .sampler     = texture_sampler_,
+                .imageView   = texture_image_view_,
                 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
             };
 
@@ -1304,12 +1322,14 @@ class Application
                     .dstBinding      = 1,
                     .dstArrayElement = 0,
                     .descriptorCount = 1,
-                    .descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                     .pImageInfo     = &image_info,
                 },
             }};
 
-            vkUpdateDescriptorSets(device_, narrow_cast<uint32_t>(descriptor_writes.size()), descriptor_writes.data(), 0, nullptr);
+            vkUpdateDescriptorSets(
+                device_, narrow_cast<uint32_t>(descriptor_writes.size()),
+                descriptor_writes.data(), 0, nullptr);
         }
     }
 
@@ -2456,30 +2476,30 @@ class Application
 
                 const vec3 p = origin + normal * (opposite_face ? -2.0f : 0.0f);
 
-                vertices.push_back({p, vec3(0, 0, 0)});
+                const vec3 c = vec3(1, 1, 1);
+                vertices.emplace_back(p, c, vec2(0,0));
                 if (opposite_face)
                 {
-                    vertices.push_back({p + 2.0f * v, vec3(0, 1, 0)});
-                    vertices.push_back({p + 2.0f * u, vec3(1, 0, 0)});
+                    vertices.emplace_back(p + 2.0f * v, c, vec2(0, 1));
+                    vertices.emplace_back(p + 2.0f * u, c, vec2(1, 0));
                 }
                 else
                 {
-                    vertices.push_back({p + 2.0f * u, vec3(1, 0, 0)});
-                    vertices.push_back({p + 2.0f * v, vec3(0, 1, 0)});
+                    vertices.emplace_back(p + 2.0f * u, c, vec2(1, 0));
+                    vertices.emplace_back(p + 2.0f * v, c, vec2(0, 1));
                 }
 
-                vertices.push_back({p + 2.0f * u, vec3(1, 0, 0)});
+                vertices.emplace_back(p + 2.0f * u, c, vec2(1, 0));
                 if (opposite_face)
                 {
-                    vertices.push_back({p + 2.0f * v, vec3(0, 1, 0)});
+                    vertices.emplace_back(p + 2.0f * v, c, vec2(0, 1));
                     vertices.push_back(
-                        {p + 2.0f * u + 2.0f * v, vec3(1, 1, 0)});
+                        {p + 2.0f * u + 2.0f * v, c, vec2(1, 1)});
                 }
                 else
                 {
-                    vertices.push_back(
-                        {p + 2.0f * u + 2.0f * v, vec3(1, 1, 0)});
-                    vertices.push_back({p + 2.0f * v, vec3(0, 1, 0)});
+                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c, vec2(1, 1));
+                    vertices.emplace_back(p + 2.0f * v, c, vec2(0, 1));
                 }
             }
         }

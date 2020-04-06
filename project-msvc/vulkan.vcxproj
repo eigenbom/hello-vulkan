@@ -162,6 +162,8 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="..\.clang-format" />
+    <None Include="..\shaders\shader.frag" />
+    <None Include="..\shaders\shader.vert" />
     <None Include="packages.config" />
     <None Include="vulkan.ruleset" />
   </ItemGroup>
