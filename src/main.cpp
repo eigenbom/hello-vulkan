@@ -42,6 +42,7 @@
 #include <vector>
 
 using glm::vec2, glm::vec3, glm::vec4, glm::mat4;
+using index_t = gsl::index;
 
 enum class BuildMode
 {
@@ -189,17 +190,6 @@ static vec4 srgb_to_linear(vec4 colour) noexcept
     };
 }
 
-namespace Colours
-{
-
-static inline vec4 red     = srgb_to_linear(rgba_to_vec4(0xfe4a49ff));
-static inline vec4 blue    = srgb_to_linear(rgba_to_vec4(0x2ab7caff));
-static inline vec4 yellow  = srgb_to_linear(rgba_to_vec4(0xfed766ff));
-static inline vec4 light   = srgb_to_linear(rgba_to_vec4(0xe6e6eaff));
-static inline vec4 lighter = srgb_to_linear(rgba_to_vec4(0xf4f4f8ff));
-
-} // namespace Colours
-
 class Application
 {
   private:
@@ -212,6 +202,7 @@ class Application
         "VK_LAYER_KHRONOS_validation"};
     static constexpr std::array<const char *, 1> device_extensions_ = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+
 
     GLFWwindow *window_                                  = nullptr;
     VkInstance instance_                                 = nullptr;
@@ -247,14 +238,16 @@ class Application
     std::vector<VkDeviceMemory> uniform_buffers_memory_  = {};
     VkDescriptorPool descriptor_pool_                    = {};
     std::vector<VkDescriptorSet> descriptor_sets_        = {};
+    VkImage colour_image_                                = VK_NULL_HANDLE;
+    VkDeviceMemory colour_image_memory_                  = VK_NULL_HANDLE;
+    VkImageView colour_image_view_                       = VK_NULL_HANDLE;
+    VkImage depth_image_                                 = VK_NULL_HANDLE;
+    VkDeviceMemory depth_image_memory_                   = VK_NULL_HANDLE;
+    VkImageView depth_image_view_                        = VK_NULL_HANDLE;
+    uint32_t indice_count_                               = 0;
+    VkImage texture_image_                               = VK_NULL_HANDLE;
+    VkDeviceMemory texture_image_memory_                 = VK_NULL_HANDLE;
     VkSampleCountFlagBits msaa_samples_ = VK_SAMPLE_COUNT_1_BIT;
-    VkImage colour_image_               = VK_NULL_HANDLE;
-    VkDeviceMemory colour_image_memory_ = VK_NULL_HANDLE;
-    VkImageView colour_image_view_      = VK_NULL_HANDLE;
-    VkImage depth_image_                = VK_NULL_HANDLE;
-    VkDeviceMemory depth_image_memory_  = VK_NULL_HANDLE;
-    VkImageView depth_image_view_       = VK_NULL_HANDLE;
-    uint32_t indice_count_              = 0;
 
   public:
     void run()
@@ -662,7 +655,7 @@ class Application
     void create_image_views()
     {
         swap_chain_image_views_.resize(swap_chain_images_.size());
-        for (gsl::index i = 0; i < std::ssize(swap_chain_images_); ++i)
+        for (index_t i = 0; i < std::ssize(swap_chain_images_); ++i)
         {
             const VkImageViewCreateInfo create_info = {
                 .sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -1010,13 +1003,53 @@ class Application
 
     void create_texture_image()
     {
-        
+        static const std::string filename = "textures/moonquest.png";
+        int tex_width                     = 0;
+        int tex_height                    = 0;
+        int tex_channels                  = 0;
+        auto *pixels = stbi_load(filename.c_str(), &tex_width, &tex_height,
+                                 &tex_channels, STBI_rgb_alpha);
+        if (pixels == nullptr || tex_width == 0 || tex_height == 0)
+        {
+            throw std::runtime_error(
+                fmt::format("Failed to load texture \"{}\"!", filename));
+        }
+
+        const VkDeviceSize image_size =
+            gsl::narrow_cast<VkDeviceSize>(tex_width) * tex_height * 4;
+
+        const auto [staging_buffer, staging_buffer_memory] =
+            create_buffer(physical_device_, device_, image_size,
+                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+        void *data = nullptr;
+        vkMapMemory(device_, staging_buffer_memory, 0, image_size, 0, &data);
+        std::memcpy(data, pixels, gsl::narrow_cast<std::size_t>(image_size));
+        vkUnmapMemory(device_, staging_buffer_memory);
+
+        stbi_image_free(pixels);
+
+        std::tie(texture_image_, texture_image_memory_) = create_image(
+            physical_device_, device_, tex_width, tex_height,
+            VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        transition_image_layout(texture_image_, VK_FORMAT_R8G8B8A8_SRGB,
+                                VK_IMAGE_LAYOUT_UNDEFINED,
+                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        copy_buffer_to_image(staging_buffer, texture_image_, tex_width,
+                             tex_height);
     }
 
     void create_framebuffers()
     {
         swap_chain_framebuffers_.resize(swap_chain_image_views_.size());
-        for (gsl::index i = 0; i < std::ssize(swap_chain_image_views_); ++i)
+        for (index_t i = 0; i < std::ssize(swap_chain_image_views_); ++i)
         {
             const std::array<VkImageView, 3> attachments = {
                 colour_image_view_,
@@ -1146,7 +1179,7 @@ class Application
         constexpr VkDeviceSize buffer_size = sizeof(UniformBufferObject);
         uniform_buffers_.resize(swap_chain_images_.size());
         uniform_buffers_memory_.resize(swap_chain_images_.size());
-        for (gsl::index i = 0; i < std::ssize(swap_chain_images_); ++i)
+        for (index_t i = 0; i < std::ssize(swap_chain_images_); ++i)
         {
             std::tie(uniform_buffers_.at(i), uniform_buffers_memory_.at(i)) =
                 create_buffer(physical_device_, device_, buffer_size,
@@ -1198,7 +1231,7 @@ class Application
             throw std::runtime_error("Failed to allocate descriptor sets!");
         }
 
-        for (gsl::index i = 0; i < std::ssize(swap_chain_images_); ++i)
+        for (index_t i = 0; i < std::ssize(swap_chain_images_); ++i)
         {
             const VkDescriptorBufferInfo buffer_info = {
                 .buffer = uniform_buffers_.at(i),
@@ -1240,7 +1273,7 @@ class Application
 
         // Record
 
-        for (gsl::index i = 0; i < std::ssize(command_buffers_); ++i)
+        for (index_t i = 0; i < std::ssize(command_buffers_); ++i)
         {
             const VkCommandBufferBeginInfo begin_info = {
                 .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -1253,13 +1286,14 @@ class Application
                     "Failed to begin recording command buffer!");
             }
 
-            const auto bg                                  = Colours::lighter;
+            const vec4 lighter = srgb_to_linear(rgba_to_vec4(0xf4f4f8ff));
+            const auto bg      = lighter;
             const std::array<VkClearValue, 3> clear_values = {{
                 {bg.r, bg.g, bg.b, bg.a},
                 {0.0f},
                 {1.0f},
             }};
-
+            
             const VkRenderPassBeginInfo render_pass_info = {
                 .sType       = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
                 .renderPass  = render_pass_,
@@ -1312,7 +1346,7 @@ class Application
             .flags = VK_FENCE_CREATE_SIGNALED_BIT,
         };
 
-        for (gsl::index i = 0; i < max_frames_in_flight_; ++i)
+        for (index_t i = 0; i < max_frames_in_flight_; ++i)
         {
             if (vkCreateSemaphore(device_, &semaphore_info, nullptr,
                                   &image_available_semaphores_.at(i)) !=
@@ -1785,13 +1819,15 @@ class Application
         return buffer;
     }
 
-    static void error_callback(int error, const char *description)
+    static void error_callback([[maybe_unused]] int error,
+                               const char *description)
     {
         log_error(description);
     }
 
-    static void key_callback(GLFWwindow *window, int key, int scancode,
-                             int action, int mods) noexcept
+    static void key_callback(GLFWwindow *window, int key,
+                             [[maybe_unused]] int scancode, int action,
+                             [[maybe_unused]] int mods) noexcept
     {
         if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
         {
@@ -1799,8 +1835,9 @@ class Application
         }
     }
 
-    static void framebuffer_resize_callback(GLFWwindow *window, int width,
-                                            int height) noexcept
+    static void framebuffer_resize_callback(
+        GLFWwindow *window, [[maybe_unused]] int width,
+        [[maybe_unused]] int height) noexcept
     {
         auto *app =
             static_cast<Application *>(glfwGetWindowUserPointer(window));
@@ -2278,40 +2315,45 @@ class Application
             {0.0f, 1.73f, 0.0f},
             {0.0f, -1.73f, 0.0f},
         }};
-
         static constexpr float darken_factor = 0.75f;
+        
+        const vec4 red    = srgb_to_linear(rgba_to_vec4(0xfe4a49ff));
+        const vec4 blue   = srgb_to_linear(rgba_to_vec4(0x2ab7caff));
+        const vec4 yellow = srgb_to_linear(rgba_to_vec4(0xfed766ff));
+        const vec4 light  = srgb_to_linear(rgba_to_vec4(0xe6e6eaff));
+
         const std::vector<Vertex> vertices   = {{
-            {pos.at(0), Colours::red},
-            {pos.at(1), Colours::red},
-            {pos.at(4), Colours::red},
+            {pos.at(0), red},
+            {pos.at(1), red},
+            {pos.at(4), red},
 
-            {pos.at(1), Colours::yellow},
-            {pos.at(2), Colours::yellow},
-            {pos.at(4), Colours::yellow},
+            {pos.at(1), yellow},
+            {pos.at(2), yellow},
+            {pos.at(4), yellow},
 
-            {pos.at(2), Colours::blue},
-            {pos.at(3), Colours::blue},
-            {pos.at(4), Colours::blue},
+            {pos.at(2), blue},
+            {pos.at(3), blue},
+            {pos.at(4), blue},
 
-            {pos.at(3), Colours::light},
-            {pos.at(0), Colours::light},
-            {pos.at(4), Colours::light},
+            {pos.at(3), light},
+            {pos.at(0), light},
+            {pos.at(4), light},
 
-            {pos.at(0), Colours::blue * darken_factor},
-            {pos.at(5), Colours::blue * darken_factor},
-            {pos.at(1), Colours::blue * darken_factor},
+            {pos.at(0), blue * darken_factor},
+            {pos.at(5), blue * darken_factor},
+            {pos.at(1), blue * darken_factor},
 
-            {pos.at(1), Colours::light * darken_factor},
-            {pos.at(5), Colours::light * darken_factor},
-            {pos.at(2), Colours::light * darken_factor},
+            {pos.at(1), light * darken_factor},
+            {pos.at(5), light * darken_factor},
+            {pos.at(2), light * darken_factor},
 
-            {pos.at(2), Colours::red * darken_factor},
-            {pos.at(5), Colours::red * darken_factor},
-            {pos.at(3), Colours::red * darken_factor},
+            {pos.at(2), red * darken_factor},
+            {pos.at(5), red * darken_factor},
+            {pos.at(3), red * darken_factor},
 
-            {pos.at(3), Colours::yellow * darken_factor},
-            {pos.at(5), Colours::yellow * darken_factor},
-            {pos.at(0), Colours::yellow * darken_factor},
+            {pos.at(3), yellow * darken_factor},
+            {pos.at(5), yellow * darken_factor},
+            {pos.at(0), yellow * darken_factor},
         }};
 
         const std::vector<uint16_t> indices = {{
@@ -2325,22 +2367,23 @@ class Application
         };
     }
 
-    static std::pair<std::vector<Vertex>, std::vector<uint16_t>>
-    create_cube()
+    static std::pair<std::vector<Vertex>, std::vector<uint16_t>> create_cube()
     {
         std::vector<Vertex> vertices;
         std::vector<uint16_t> indices;
 
-        for (const int axis: {0, 1, 2})
+        for (const int axis : {0, 1, 2})
         {
-            const vec3 u = axis == 0 ? vec3(0, 0, 1)
+            const vec3 u = axis == 0
+                               ? vec3(0, 0, 1)
                                : axis == 1 ? vec3(1, 0, 0) : vec3(-1, 0, 0);
-            const vec3 v =
-                axis == 0 ? vec3(0, 1, 0) : axis == 1 ? vec3(0, 0, 1) : vec3(0, 1, 0);
-            const vec3 origin = axis == 0
-                               ? vec3(1, -1, -1)
-                               : axis == 1 ? vec3(-1, 1, -1) : vec3(1, -1, 1);
-            
+            const vec3 v = axis == 0
+                               ? vec3(0, 1, 0)
+                               : axis == 1 ? vec3(0, 0, 1) : vec3(0, 1, 0);
+            const vec3 origin =
+                axis == 0 ? vec3(1, -1, -1)
+                          : axis == 1 ? vec3(-1, 1, -1) : vec3(1, -1, 1);
+
             const vec3 colour = vec3(axis == 0, axis == 1, axis == 2);
             const vec3 normal = vec3(axis == 0, axis == 1, axis == 2);
 
@@ -2353,7 +2396,7 @@ class Application
                 indices.push_back(indices.back() + 1);
                 indices.push_back(indices.back() + 1);
 
-                const vec3 p = origin + normal * (opposite_face ? -2.0f: 0.0f);
+                const vec3 p = origin + normal * (opposite_face ? -2.0f : 0.0f);
 
                 vertices.push_back({p, vec3(0, 0, 0)});
                 if (opposite_face)
@@ -2380,7 +2423,6 @@ class Application
                         {p + 2.0f * u + 2.0f * v, vec3(1, 1, 0)});
                     vertices.push_back({p + 2.0f * v, vec3(0, 1, 0)});
                 }
-                
             }
         }
 
@@ -2424,7 +2466,7 @@ class Application
         std::vector<uint16_t> indices;
 
         // Loop over shapes
-        for (gsl::index shape_index = 0; shape_index < std::ssize(shapes);
+        for (index_t shape_index = 0; shape_index < std::ssize(shapes);
              ++shape_index)
         {
             // Loop over faces(polygon)
@@ -2442,12 +2484,16 @@ class Application
                 vec3 normal   = {0.0f, 0.0f, 0.0f};
                 if constexpr (debug_load_outlined)
                 {
-                    const auto get_position = [&](int index) {
-                        auto idx = shapes[shape_index]
-                                       .mesh.indices[index_offset + index];
-                        auto vx  = attrib.vertices[3 * idx.vertex_index + 0];
-                        auto vy  = attrib.vertices[3 * idx.vertex_index + 1];
-                        auto vz  = attrib.vertices[3 * idx.vertex_index + 2];
+                    const auto get_position = [&](int index) noexcept {
+                        const auto idx =
+                            shapes[shape_index]
+                                .mesh.indices[index_offset + index];
+                        const auto vx =
+                            attrib.vertices[3 * idx.vertex_index + 0];
+                        const auto vy =
+                            attrib.vertices[3 * idx.vertex_index + 1];
+                        const auto vz =
+                            attrib.vertices[3 * idx.vertex_index + 2];
                         return vec3(vx, vy, vz);
                     };
 
@@ -2466,41 +2512,35 @@ class Application
                      ++vertex_index)
                 {
                     // access to vertex
-                    tinyobj::index_t idx =
+                    const auto idx =
                         shapes[shape_index]
                             .mesh.indices[index_offset + vertex_index];
-                    tinyobj::real_t vx =
-                        attrib.vertices[3 * idx.vertex_index + 0];
-                    tinyobj::real_t vy =
-                        attrib.vertices[3 * idx.vertex_index + 1];
-                    tinyobj::real_t vz =
-                        attrib.vertices[3 * idx.vertex_index + 2];
+                    const auto vx = attrib.vertices[3 * idx.vertex_index + 0];
+                    const auto vy = attrib.vertices[3 * idx.vertex_index + 1];
+                    const auto vz = attrib.vertices[3 * idx.vertex_index + 2];
 
                     if (idx.normal_index != -1)
                     {
-                        tinyobj::real_t nx =
+                        const auto nx =
                             attrib.normals[3 * idx.normal_index + 0];
-                        tinyobj::real_t ny =
+                        const auto ny =
                             attrib.normals[3 * idx.normal_index + 1];
-                        tinyobj::real_t nz =
+                        const auto nz =
                             attrib.normals[3 * idx.normal_index + 2];
                     }
 
                     if (idx.texcoord_index != -1)
                     {
-                        tinyobj::real_t tx =
+                        const auto tx =
                             attrib.texcoords[2 * idx.texcoord_index + 0];
-                        tinyobj::real_t ty =
+                        const auto ty =
                             attrib.texcoords[2 * idx.texcoord_index + 1];
                     }
 
                     // Optional: vertex colors
-                    tinyobj::real_t red =
-                        attrib.colors[3 * idx.vertex_index + 0];
-                    tinyobj::real_t green =
-                        attrib.colors[3 * idx.vertex_index + 1];
-                    tinyobj::real_t blue =
-                        attrib.colors[3 * idx.vertex_index + 2];
+                    const auto red   = attrib.colors[3 * idx.vertex_index + 0];
+                    const auto green = attrib.colors[3 * idx.vertex_index + 1];
+                    const auto blue  = attrib.colors[3 * idx.vertex_index + 2];
 
                     const vec3 transformed_position =
                         vec3(transform * vec4(vx, vy, vz, 1.0f));
@@ -2527,22 +2567,22 @@ class Application
                          ++vertex_index)
                     {
                         // access to vertex
-                        tinyobj::index_t idx =
+                        const auto idx =
                             shapes[shape_index]
                                 .mesh.indices[index_offset + vertex_index];
-                        tinyobj::real_t vx =
+                        const auto vx =
                             attrib.vertices[3 * idx.vertex_index + 0];
-                        tinyobj::real_t vy =
+                        const auto vy =
                             attrib.vertices[3 * idx.vertex_index + 1];
-                        tinyobj::real_t vz =
+                        const auto vz =
                             attrib.vertices[3 * idx.vertex_index + 2];
 
                         // Optional: vertex colors
-                        tinyobj::real_t red =
+                        const auto red =
                             attrib.colors[3 * idx.vertex_index + 0];
-                        tinyobj::real_t green =
+                        const auto green =
                             attrib.colors[3 * idx.vertex_index + 1];
-                        tinyobj::real_t blue =
+                        const auto blue =
                             attrib.colors[3 * idx.vertex_index + 2];
 
                         vec3 transformed_position =
@@ -2572,7 +2612,7 @@ class Application
     }
 };
 
-int main(int argc, char **argv)
+int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
 {
     Application application;
     try

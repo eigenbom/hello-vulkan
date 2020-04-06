@@ -22,9 +22,13 @@
   <ItemGroup>
     <None Include="packages.config" />
     <None Include="..\.clang-format" />
+    <None Include="vulkan.ruleset" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\tiny_obj_loader.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\stb_image.h">
       <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>
