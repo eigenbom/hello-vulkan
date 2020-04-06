@@ -342,7 +342,7 @@ class Application
             const auto time_end = std::chrono::steady_clock::now();
             const auto ms_per_frame = std::chrono::duration_cast<std::chrono::milliseconds>(time_end - time_start);
             time_start = time_end;
-            static const std::chrono::milliseconds min_ms_per_frame = std::chrono::milliseconds { (int) std::ceil(1000.0 / 60.0f) };
+            static const std::chrono::milliseconds min_ms_per_frame = std::chrono::milliseconds { (int) std::ceil(1000.0 / 120.0f) };
             if (ms_per_frame < min_ms_per_frame){
                 std::this_thread::sleep_for(std::chrono::milliseconds {min_ms_per_frame - ms_per_frame});
             }
