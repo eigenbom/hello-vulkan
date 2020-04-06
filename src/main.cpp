@@ -2477,29 +2477,28 @@ class Application
                 const vec3 p = origin + normal * (opposite_face ? -2.0f : 0.0f);
 
                 const vec3 c = vec3(1, 1, 1);
-                vertices.emplace_back(p, c, vec2(0,0));
+                vertices.emplace_back(p, c, vec2(0, 1));
                 if (opposite_face)
                 {
-                    vertices.emplace_back(p + 2.0f * v, c, vec2(0, 1));
-                    vertices.emplace_back(p + 2.0f * u, c, vec2(1, 0));
+                    vertices.emplace_back(p + 2.0f * v, c, vec2(0, 0));
+                    vertices.emplace_back(p + 2.0f * u, c, vec2(1, 1));
                 }
                 else
                 {
-                    vertices.emplace_back(p + 2.0f * u, c, vec2(1, 0));
-                    vertices.emplace_back(p + 2.0f * v, c, vec2(0, 1));
+                    vertices.emplace_back(p + 2.0f * u, c, vec2(1, 1));
+                    vertices.emplace_back(p + 2.0f * v, c, vec2(0, 0));
                 }
 
-                vertices.emplace_back(p + 2.0f * u, c, vec2(1, 0));
+                vertices.emplace_back(p + 2.0f * u, c, vec2(1, 1));
                 if (opposite_face)
                 {
-                    vertices.emplace_back(p + 2.0f * v, c, vec2(0, 1));
-                    vertices.push_back(
-                        {p + 2.0f * u + 2.0f * v, c, vec2(1, 1)});
+                    vertices.emplace_back(p + 2.0f * v, c, vec2(0, 0));
+                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c, vec2(1, 0));
                 }
                 else
                 {
-                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c, vec2(1, 1));
-                    vertices.emplace_back(p + 2.0f * v, c, vec2(0, 1));
+                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c, vec2(1, 0));
+                    vertices.emplace_back(p + 2.0f * v, c, vec2(0, 0));
                 }
             }
         }
