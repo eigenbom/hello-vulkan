@@ -39,6 +39,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 using glm::vec2, glm::vec3, glm::vec4, glm::mat4;
@@ -338,6 +339,15 @@ class Application
             glfwPollEvents();
             draw_frame();
 
+            const auto time_end = std::chrono::steady_clock::now();
+            const auto ms_per_frame = std::chrono::duration_cast<std::chrono::milliseconds>(time_end - time_start);
+            time_start = time_end;
+            static const std::chrono::milliseconds min_ms_per_frame = std::chrono::milliseconds { (int) std::ceil(1000.0 / 60.0f) };
+            if (ms_per_frame < min_ms_per_frame){
+                std::this_thread::sleep_for(std::chrono::milliseconds {min_ms_per_frame - ms_per_frame});
+            }
+
+            /*
             ++frame_count;
             if (frame_count == 10000)
             {
@@ -352,6 +362,7 @@ class Application
                 time_start  = time_end;
                 frame_count = 0;
             }
+            */
         }
         vkDeviceWaitIdle(device_);
     }
@@ -1021,7 +1032,7 @@ class Application
 
     void create_texture_image()
     {
-        static const std::string filename = "textures/moonquest.png";
+        static const std::string filename = "textures/grass.png";
         int tex_width                     = 0;
         int tex_height                    = 0;
         int tex_channels                  = 0;
@@ -1156,7 +1167,9 @@ class Application
     {
         // Load data
         // auto [vertices, indices] = create_octahedron();
-        auto [vertices, indices] = create_cube();
+        // auto [vertices, indices] = create_cube();
+        auto [vertices, indices] = create_grass_block();
+
         /*
         auto [vertices, indices] =
             load_mesh("assets/teapot.obj",
@@ -2078,7 +2091,7 @@ class Application
             const float part  = std::fmod(time * speed, parts);
             const float ipart = std::floor(part);
             const float dpart = std::clamp(
-                0.5f + 3.8f * (std::fmod(part, 1.0f) - 0.5f), 0.0f, 1.0f);
+                0.5f + 1.8f * (std::fmod(part, 1.0f) - 0.5f), 0.0f, 1.0f);
 
             const float angle =
                 direction *
@@ -2096,13 +2109,12 @@ class Application
         const mat4 linear_turn_model_transform = glm::rotate(
             mat4(1.0f), glm::radians(45.0f) * time * 3, vec3(0.0f, 1.0f, 0.0f));
 
-        const mat4 model_transform = linear_turn_model_transform;
+        const mat4 model_transform = stutter_turn_model_transform;
         UniformBufferObject ubo    = {
             .model = model_transform,
             .view  = glm::lookAt(
                 vec3(0.0f, 1.5f, -3.0f), vec3(0.0f, 0.0f, 0.0f),
-                vec3(0.0f, -1.0f,
-                     0.0f)), // NB: Reverse y due to opengl/vulkan differences
+                vec3(0.0f, -1.0f, 0.0f)), // NB: Reverse y due to opengl/vulkan differences
             .proj = glm::perspective(glm::radians(70.0f), aspect_ratio, 0.01f,
                                      10.0f),
         };
@@ -2499,6 +2511,90 @@ class Application
                 {
                     vertices.emplace_back(p + 2.0f * u + 2.0f * v, c, vec2(1, 0));
                     vertices.emplace_back(p + 2.0f * v, c, vec2(0, 0));
+                }
+            }
+        }
+
+        return {
+            vertices,
+            indices,
+        };
+    }
+
+    static std::pair<std::vector<Vertex>, std::vector<uint16_t>> create_grass_block()
+    {
+        std::vector<Vertex> vertices;
+        std::vector<uint16_t> indices;
+
+        for (const int axis : {0, 1, 2})
+        {
+            const vec3 u = axis == 0
+                               ? vec3(0, 0, 1)
+                               : axis == 1 ? vec3(1, 0, 0) : vec3(-1, 0, 0);
+            const vec3 v = axis == 0
+                               ? vec3(0, 1, 0)
+                               : axis == 1 ? vec3(0, 0, 1) : vec3(0, 1, 0);
+            const vec3 origin =
+                axis == 0 ? vec3(1, -1, -1)
+                          : axis == 1 ? vec3(-1, 1, -1) : vec3(1, -1, 1);
+
+            const vec3 colour = vec3(axis == 0, axis == 1, axis == 2);
+            const vec3 normal = vec3(axis == 0, axis == 1, axis == 2);
+
+            for (const bool opposite_face : {false, true})
+            {
+                indices.push_back(narrow_cast<uint16_t>(vertices.size()));
+                indices.push_back(indices.back() + 1);
+                indices.push_back(indices.back() + 1);
+
+                const vec3 p = origin + normal * (opposite_face ? -2.0f : 0.0f);
+
+                const float du = 1.0f / 4.0f;
+                const float dv = 1.0f / 3.0f;
+                const std::array<vec2, 4> side_uv = {{ 
+                    { 0, dv },
+                    { du, dv },
+                    { du, 0 },
+                    { 0, 0 },
+                }};
+
+                const std::array<vec2, 4> top_uv = {{ 
+                    { 2*du + 0, dv + dv },
+                    { 2*du + du, dv + dv },
+                    { 2*du + du, dv + 0 },
+                    { 2*du + 0, dv + 0 },
+                }};
+
+                const std::array<vec2, 4>& uv = (axis == 1) ? top_uv : side_uv; 
+
+                const vec3 c = vec3(1, 1, 1);
+                vertices.emplace_back(p, c, uv[0]);
+                if (opposite_face)
+                {
+                    vertices.emplace_back(p + 2.0f * v, c, uv[3]);
+                    vertices.emplace_back(p + 2.0f * u, c, uv[1]);
+                }
+                else
+                {
+                    vertices.emplace_back(p + 2.0f * u, c, uv[1]);
+                    vertices.emplace_back(p + 2.0f * v, c, uv[3]);
+                }
+
+                indices.push_back(indices.back() + 1);
+                indices.push_back(indices.back() + 1);
+                indices.push_back(indices.back() + 1);
+                vertices.emplace_back(p + 2.0f * u, c, uv[1]);
+                if (opposite_face)
+                {
+                    vertices.emplace_back(p + 2.0f * v, c, uv[3]);
+                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c,
+                                          uv[2]);
+                }
+                else
+                {
+                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c,
+                                          uv[2]);
+                    vertices.emplace_back(p + 2.0f * v, c, uv[3]);
                 }
             }
         }
