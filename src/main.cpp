@@ -4,11 +4,6 @@
 // Code adapted from vulkan-tutorial.com
 
 #define NOMINMAX
-#define GLFW_INCLUDE_VULKAN
-#define GLFW_EXPOSE_NATIVE_WIN32
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#define GLM_FORCE_RADIANS
-#define GLM_FORCE_PURE
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
@@ -16,12 +11,25 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-#include <GLFW/glfw3.h>
-#include <GLFW/glfw3native.h>
-#include <fmt/core.h>
+#define TINYGLTF_IMPLEMENTATION
+#define TINYGLTF_NO_STB_IMAGE_WRITE
+#define TINYGLTF_NO_STB_IMAGE
+#define TINYGLTF_USE_CPP14
+#include "tiny_gltf.h"
+
+#define GLFW_EXPOSE_NATIVE_WIN32
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_FORCE_RADIANS
+#define GLM_FORCE_PURE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <gsl/gsl>
+
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+#include <GLFW/glfw3native.h>
+
+#include <fmt/core.h>
 
 #include <algorithm>
 #include <array>
@@ -135,7 +143,7 @@ struct Vertex
     vec2 tex_coord;
 
     Vertex(vec3 pos = {0, 0, 0}, vec3 colour = {1, 1, 1},
-           vec2 tex_coord = {0, 0})
+           vec2 tex_coord = {0, 0}) noexcept
         : pos(pos), colour(colour), tex_coord(tex_coord)
     {
     }
@@ -332,19 +340,24 @@ class Application
 
     void main_loop()
     {
-        auto time_start      = std::chrono::steady_clock::now();
-        uint32_t frame_count = 0;
+        auto time_start = std::chrono::steady_clock::now();
+        // uint32_t frame_count = 0;
         while (!glfwWindowShouldClose(window_))
         {
             glfwPollEvents();
             draw_frame();
 
             const auto time_end = std::chrono::steady_clock::now();
-            const auto ms_per_frame = std::chrono::duration_cast<std::chrono::milliseconds>(time_end - time_start);
+            const auto ms_per_frame =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    time_end - time_start);
             time_start = time_end;
-            static const std::chrono::milliseconds min_ms_per_frame = std::chrono::milliseconds { (int) std::ceil(1000.0 / 120.0f) };
-            if (ms_per_frame < min_ms_per_frame){
-                std::this_thread::sleep_for(std::chrono::milliseconds {min_ms_per_frame - ms_per_frame});
+            static const std::chrono::milliseconds min_ms_per_frame =
+                std::chrono::milliseconds {(int)std::ceil(1000.0 / 120.0f)};
+            if (ms_per_frame < min_ms_per_frame)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds {
+                    min_ms_per_frame - ms_per_frame});
             }
 
             /*
@@ -1168,11 +1181,14 @@ class Application
         // Load data
         // auto [vertices, indices] = create_octahedron();
         // auto [vertices, indices] = create_cube();
-        auto [vertices, indices] = create_grass_block();
+        // auto [vertices, indices] = create_grass_block();
+
+        auto [vertices, indices] =
+            load_gltf("assets\\lighthouse\\scene.gltf", mat4());
 
         /*
         auto [vertices, indices] =
-            load_mesh("assets/teapot.obj",
+            load_mesh("assets\\teapot.obj",
                       glm::scale(glm::translate(glm::mat4(1.0f),
                                                 vec3(0.0f, -0.75f, 0.0f)),
                                  vec3(0.5f, 0.5f, 0.5f)));
@@ -1766,7 +1782,7 @@ class Application
     }
 
     static VkSurfaceFormatKHR choose_swap_surface_format(
-        const std::vector<VkSurfaceFormatKHR> &available_formats)
+        const std::vector<VkSurfaceFormatKHR> &available_formats) noexcept
     {
         Expects(!available_formats.empty());
         for (const auto &format : available_formats)
@@ -2114,7 +2130,8 @@ class Application
             .model = model_transform,
             .view  = glm::lookAt(
                 vec3(0.0f, 1.5f, -3.0f), vec3(0.0f, 0.0f, 0.0f),
-                vec3(0.0f, -1.0f, 0.0f)), // NB: Reverse y due to opengl/vulkan differences
+                vec3(0.0f, -1.0f,
+                     0.0f)), // NB: Reverse y due to opengl/vulkan differences
             .proj = glm::perspective(glm::radians(70.0f), aspect_ratio, 0.01f,
                                      10.0f),
         };
@@ -2505,11 +2522,13 @@ class Application
                 if (opposite_face)
                 {
                     vertices.emplace_back(p + 2.0f * v, c, vec2(0, 0));
-                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c, vec2(1, 0));
+                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c,
+                                          vec2(1, 0));
                 }
                 else
                 {
-                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c, vec2(1, 0));
+                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c,
+                                          vec2(1, 0));
                     vertices.emplace_back(p + 2.0f * v, c, vec2(0, 0));
                 }
             }
@@ -2521,7 +2540,8 @@ class Application
         };
     }
 
-    static std::pair<std::vector<Vertex>, std::vector<uint16_t>> create_grass_block()
+    static std::pair<std::vector<Vertex>, std::vector<uint16_t>>
+    create_grass_block()
     {
         std::vector<Vertex> vertices;
         std::vector<uint16_t> indices;
@@ -2549,23 +2569,23 @@ class Application
 
                 const vec3 p = origin + normal * (opposite_face ? -2.0f : 0.0f);
 
-                const float du = 1.0f / 4.0f;
-                const float dv = 1.0f / 3.0f;
-                const std::array<vec2, 4> side_uv = {{ 
-                    { 0, dv },
-                    { du, dv },
-                    { du, 0 },
-                    { 0, 0 },
+                const float du                    = 1.0f / 4.0f;
+                const float dv                    = 1.0f / 3.0f;
+                const std::array<vec2, 4> side_uv = {{
+                    {0, dv},
+                    {du, dv},
+                    {du, 0},
+                    {0, 0},
                 }};
 
-                const std::array<vec2, 4> top_uv = {{ 
-                    { 2*du + 0, dv + dv },
-                    { 2*du + du, dv + dv },
-                    { 2*du + du, dv + 0 },
-                    { 2*du + 0, dv + 0 },
+                const std::array<vec2, 4> top_uv = {{
+                    {2 * du + 0, dv + dv},
+                    {2 * du + du, dv + dv},
+                    {2 * du + du, dv + 0},
+                    {2 * du + 0, dv + 0},
                 }};
 
-                const std::array<vec2, 4>& uv = (axis == 1) ? top_uv : side_uv; 
+                const std::array<vec2, 4> &uv = (axis == 1) ? top_uv : side_uv;
 
                 const vec3 c = vec3(1, 1, 1);
                 vertices.emplace_back(p, c, uv[0]);
@@ -2587,13 +2607,11 @@ class Application
                 if (opposite_face)
                 {
                     vertices.emplace_back(p + 2.0f * v, c, uv[3]);
-                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c,
-                                          uv[2]);
+                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c, uv[2]);
                 }
                 else
                 {
-                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c,
-                                          uv[2]);
+                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c, uv[2]);
                     vertices.emplace_back(p + 2.0f * v, c, uv[3]);
                 }
             }
@@ -2782,6 +2800,161 @@ class Application
             vertices,
             indices,
         };
+    }
+
+    // Image loading hook for load_gltf below
+    // Original from tiny_gltf.h
+    static bool LoadImageData(tinygltf::Image *image, const int image_idx,
+                              std::string *err, std::string *warn,
+                              int req_width, int req_height,
+                              const unsigned char *bytes, int size,
+                              void *user_data)
+    {
+        (void)user_data;
+        (void)warn;
+
+        int w = 0, h = 0, comp = 0, req_comp = 0;
+
+        unsigned char *data = nullptr;
+
+        // force 32-bit textures for common Vulkan compatibility. It appears
+        // that some GPU drivers do not support 24-bit images for Vulkan
+        req_comp       = 4;
+        int bits       = 8;
+        int pixel_type = TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE;
+
+        // It is possible that the image we want to load is a 16bit per channel
+        // image We are going to attempt to load it as 16bit per channel, and if
+        // it worked, set the image data accodingly. We are casting the returned
+        // pointer into unsigned char, because we are representing "bytes". But
+        // we are updating the Image metadata to signal that this image uses 2
+        // bytes (16bits) per channel:
+        if (stbi_is_16_bit_from_memory(bytes, size))
+        {
+            data = reinterpret_cast<unsigned char *>(
+                stbi_load_16_from_memory(bytes, size, &w, &h, &comp, req_comp));
+            if (data)
+            {
+                bits       = 16;
+                pixel_type = TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT;
+            }
+        }
+
+        // at this point, if data is still NULL, it means that the image wasn't
+        // 16bit per channel, we are going to load it as a normal 8bit per
+        // channel mage as we used to do: if image cannot be decoded, ignore
+        // parsing and keep it by its path don't break in this case
+        // FIXME we should only enter this function if the image is embedded. If
+        // image->uri references
+        // an image file, it should be left as it is. Image loading should not
+        // be mandatory (to support other formats)
+        if (!data)
+            data = stbi_load_from_memory(bytes, size, &w, &h, &comp, req_comp);
+        if (!data)
+        {
+            // NOTE: you can use `warn` instead of `err`
+            if (err)
+            {
+                (*err) += "Unknown image format. STB cannot decode image data "
+                          "for image[" +
+                          std::to_string(image_idx) + "] name = \"" +
+                          image->name + "\".\n";
+            }
+            return false;
+        }
+
+        if ((w < 1) || (h < 1))
+        {
+            stbi_image_free(data);
+            if (err)
+            {
+                (*err) += "Invalid image data for image[" +
+                          std::to_string(image_idx) + "] name = \"" +
+                          image->name + "\"\n";
+            }
+            return false;
+        }
+
+        if (req_width > 0)
+        {
+            if (req_width != w)
+            {
+                stbi_image_free(data);
+                if (err)
+                {
+                    (*err) += "Image width mismatch for image[" +
+                              std::to_string(image_idx) + "] name = \"" +
+                              image->name + "\"\n";
+                }
+                return false;
+            }
+        }
+
+        if (req_height > 0)
+        {
+            if (req_height != h)
+            {
+                stbi_image_free(data);
+                if (err)
+                {
+                    (*err) += "Image height mismatch. for image[" +
+                              std::to_string(image_idx) + "] name = \"" +
+                              image->name + "\"\n";
+                }
+                return false;
+            }
+        }
+
+        image->width      = w;
+        image->height     = h;
+        image->component  = req_comp;
+        image->bits       = bits;
+        image->pixel_type = pixel_type;
+        image->image.resize(static_cast<size_t>(w * h * req_comp) *
+                            size_t(bits / 8));
+        std::copy(data, data + w * h * req_comp * (bits / 8),
+                  image->image.begin());
+        stbi_image_free(data);
+
+        return true;
+    }
+
+    static std::pair<std::vector<Vertex>, std::vector<uint16_t>> load_gltf(
+        const std::string &filename, mat4 transform)
+    {
+
+        using namespace tinygltf;
+
+        Model model;
+        TinyGLTF loader;
+        loader.SetImageLoader(LoadImageData, nullptr);
+
+        std::string error;
+        std::string warning;
+        bool result = loader.LoadASCIIFromFile(&model, &error, &warning,
+                                               filename.c_str());
+
+        if (!warning.empty())
+        {
+            log_warn(warning);
+        }
+        if (!error.empty())
+        {
+            log_error(error);
+        }
+
+        if (!result)
+        {
+            throw std::runtime_error(
+                fmt::format("Failed to load gltf \"{}\"!", filename));
+        }
+
+        std::vector<Vertex> vertices;
+        std::vector<uint16_t> indices;
+
+        Ensures(!vertices.empty());
+        Ensures(!indices.empty());
+        return {vertices, indices};
     }
 };
 

@@ -168,7 +168,9 @@
     <None Include="vulkan.ruleset" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\src\json.hpp" />
     <ClInclude Include="..\src\stb_image.h" />
+    <ClInclude Include="..\src\tiny_gltf.h" />
     <ClInclude Include="..\src\tiny_obj_loader.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
