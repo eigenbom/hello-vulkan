@@ -1390,13 +1390,12 @@ class Application
             throw std::runtime_error("Failed to acquire swap chain image!");
         }
 
-        if (images_in_flight_[image_index) != VK_NULL_HANDL])
+        if (images_in_flight_[image_index] != VK_NULL_HANDLE)
         {
             vkWaitForFences(device_, 1, &images_in_flight_[image_index],
                             VK_TRUE, UINT64_MAX);
         }
-        images_in_flight_[image_index)]=
-            in_flight_fences_[current_frame_];
+        images_in_flight_[image_index] = in_flight_fences_[current_frame_];
 
         const VkSemaphore wait_semaphores[] = {
             image_available_semaphores_[current_frame_],
