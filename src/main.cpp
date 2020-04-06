@@ -8,11 +8,14 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
-// #define GLM_FORCE_LEFT_HANDED
 #define GLM_FORCE_PURE
-#define TINYOBJLOADER_IMPLEMENTATION
 
+#define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 #include <fmt/core.h>
@@ -302,6 +305,7 @@ class Application
         create_command_pool();
         create_colour_resources();
         create_depth_resources();
+        create_texture_image();
         create_framebuffers();
         create_vertex_and_index_buffers();
         create_uniform_buffers();
@@ -1002,6 +1006,11 @@ class Application
         transition_image_layout(
             depth_image_, depth_format, VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    }
+
+    void create_texture_image()
+    {
+        
     }
 
     void create_framebuffers()
