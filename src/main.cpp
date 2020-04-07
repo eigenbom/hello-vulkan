@@ -276,6 +276,11 @@ class Application
     VkDeviceMemory depth_image_memory_                   = {};
     VkImageView depth_image_view_                        = {};
 
+    mat4 camera_transform_     = {};
+    bool mouse_grab_           = false;
+    vec2 mouse_grab_origin_    = {};
+    mat4 mouse_grab_transform_ = {};
+
     struct Texture
     {
         VkImage image_                = {};
@@ -306,7 +311,7 @@ class Application
         {
             throw std::runtime_error("Couldn't initialise GLFW!");
         }
-        glfwSetErrorCallback(error_callback);
+        glfwSetErrorCallback(glfw_error_callback);
 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         window_ = glfwCreateWindow(initial_width_, initial_height_,
@@ -317,8 +322,10 @@ class Application
                 "Window or OpenGL context creation failed!");
         }
         glfwSetWindowUserPointer(window_, this);
-        glfwSetKeyCallback(window_, key_callback);
-        glfwSetFramebufferSizeCallback(window_, framebuffer_resize_callback);
+        glfwSetKeyCallback(window_, glfw_key_callback);
+        glfwSetMouseButtonCallback(window_, glfw_mouse_button);
+        glfwSetFramebufferSizeCallback(window_,
+                                       glfw_framebuffer_resize_callback);
     }
 
     void init_vulkan()
@@ -348,23 +355,77 @@ class Application
     void main_loop()
     {
         auto time_start = std::chrono::steady_clock::now();
+        const vec3 initial_position {0.0f, 1.5f, -3.0f};
+        camera_transform_ = glm::lookAt(
+            initial_position, vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, -1.0f, 0.0f));
+        std::chrono::milliseconds last_frame_duration {0};
+
         // uint32_t frame_count = 0;
         while (!glfwWindowShouldClose(window_))
         {
             glfwPollEvents();
+
+            // Update camera transform
+            if (mouse_grab_)
+            {
+                double xpos = 0;
+                double ypos = 0;
+                glfwGetCursorPos(window_, &xpos, &ypos);
+                const vec2 current_mouse_pos = vec2(xpos, ypos);
+                const vec2 diff = current_mouse_pos - mouse_grab_origin_;
+                // log_info("diff {},{}", diff.x, diff.y);
+
+                // Create new view transform
+                // NB: Flip y due to opengl/vulkan differences
+
+                const vec3 tilt_axis = glm::normalize(
+                    glm::cross(vec3(mouse_grab_transform_ * vec4(0, 0, 1, 1)),
+                               vec3(0, 1, 0)));
+
+                const mat4 pan =
+                    glm::rotate(mat4(1.0),
+                                glm::radians(diff.x * 0.33f), vec3(0, 1, 0));
+                
+                const mat4 translate =
+                    glm::translate(mat4(1.0), vec3(0, diff.y * 0.01f, 0));
+                const mat4 tilt = glm::rotate(
+                    mat4(1.0), glm::radians(diff.y * 0.1f), vec3(1, 0, 0));
+
+                camera_transform_ =
+                    tilt * mouse_grab_transform_ * translate * pan;
+            }
+            else {
+                const float dt = last_frame_duration.count() / 1000.0f;
+                const mat4 pan = glm::rotate(mat4(1.0), glm::radians(dt * 5.0f),
+                                             vec3(0, 1, 0));                
+                camera_transform_ = camera_transform_ * pan;
+            }
+
+            // Render
+
             draw_frame();
 
+            // Compute frame duration
             const auto time_end = std::chrono::steady_clock::now();
             const auto ms_per_frame =
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     time_end - time_start);
-            time_start = time_end;
-            static const std::chrono::milliseconds min_ms_per_frame =
-                std::chrono::milliseconds {(int)std::ceil(1000.0 / 120.0f)};
-            if (ms_per_frame < min_ms_per_frame)
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds {
-                    min_ms_per_frame - ms_per_frame});
+            time_start          = time_end;
+            last_frame_duration = ms_per_frame;
+
+            // Limit FPS
+            constexpr int max_fps = 120; // Set to 0 for unlimited
+
+            if constexpr (max_fps > 0)
+            {   
+                static const std::chrono::milliseconds min_ms_per_frame =
+                    std::chrono::milliseconds {
+                        (int)std::ceil(1000.0f / max_fps)};
+                if (ms_per_frame < min_ms_per_frame)
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds {
+                        min_ms_per_frame - ms_per_frame});
+                }
             }
 
             /*
@@ -457,9 +518,10 @@ class Application
 
     void create_instance()
     {
-        if (enable_validation_layers_ && !check_validation_layer_support())
+        if constexpr (enable_validation_layers_)
         {
-            throw std::runtime_error("Validation layers not available!!");
+            if (!check_validation_layer_support())
+                throw std::runtime_error("Validation layers not available!!");
         }
 
         const VkApplicationInfo app_info {
@@ -1912,31 +1974,6 @@ class Application
         return buffer;
     }
 
-    static void error_callback([[maybe_unused]] int error,
-                               const char *description)
-    {
-        log_error(description);
-    }
-
-    static void key_callback(GLFWwindow *window, int key,
-                             [[maybe_unused]] int scancode, int action,
-                             [[maybe_unused]] int mods) noexcept
-    {
-        if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
-        {
-            glfwSetWindowShouldClose(window, GLFW_TRUE);
-        }
-    }
-
-    static void framebuffer_resize_callback(
-        GLFWwindow *window, [[maybe_unused]] int width,
-        [[maybe_unused]] int height) noexcept
-    {
-        auto *app =
-            static_cast<Application *>(glfwGetWindowUserPointer(window));
-        app->framebuffer_resized_ = true;
-    }
-
     static uint32_t find_memory_type(VkPhysicalDevice physical_device,
                                      uint32_t type_filter,
                                      VkMemoryPropertyFlags properties)
@@ -2112,14 +2149,12 @@ class Application
         const mat4 linear_turn_model_transform =
             glm::rotate(mat4(1.0f), time * 0.1f, vec3(0.0f, 1.0f, 0.0f));
 
-        const mat4 model_transform = linear_turn_model_transform;
-        UniformBufferObject ubo    = {
+        const mat4 model_transform = mat4(1.0f);
+
+        UniformBufferObject ubo = {
             .model = model_transform,
-            .view  = glm::lookAt(
-                vec3(0.0f, 1.5f, -3.0f), vec3(0.0f, 0.0f, 0.0f),
-                vec3(0.0f, -1.0f,
-                     0.0f)), // NB: Reverse y due to opengl/vulkan differences
-            .proj = glm::perspective(glm::radians(70.0f), aspect_ratio, 0.01f,
+            .view  = camera_transform_,
+            .proj  = glm::perspective(glm::radians(70.0f), aspect_ratio, 0.01f,
                                      10.0f),
         };
 
@@ -3001,6 +3036,57 @@ class Application
                              &transition_last_mipmap_barrier);
 
         end_single_time_commands(device, command_pool, queue, command_buffer);
+    }
+
+    static void glfw_error_callback([[maybe_unused]] int error,
+                                    const char *description)
+    {
+        log_error(description);
+    }
+
+    static void glfw_key_callback(GLFWwindow *window, int key,
+                                  [[maybe_unused]] int scancode, int action,
+                                  [[maybe_unused]] int mods) noexcept
+    {
+        if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
+        {
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+        }
+    }
+
+    static void glfw_mouse_button(GLFWwindow *window, int button,
+                                  [[maybe_unused]] int action,
+                                  [[maybe_unused]] int mods) noexcept
+    {
+        auto *app =
+            static_cast<Application *>(glfwGetWindowUserPointer(window));
+        if (button == GLFW_MOUSE_BUTTON_LEFT)
+        {
+            // TODO: Grab / Release mouse
+            if (action == GLFW_PRESS)
+            {
+                double xpos = 0;
+                double ypos = 0;
+                glfwGetCursorPos(window, &xpos, &ypos);
+
+                app->mouse_grab_           = true;
+                app->mouse_grab_origin_    = {xpos, ypos};
+                app->mouse_grab_transform_ = app->camera_transform_;
+            }
+            else
+            {
+                app->mouse_grab_ = false;
+            }
+        }
+    }
+
+    static void glfw_framebuffer_resize_callback(
+        GLFWwindow *window, [[maybe_unused]] int width,
+        [[maybe_unused]] int height) noexcept
+    {
+        auto *app =
+            static_cast<Application *>(glfwGetWindowUserPointer(window));
+        app->framebuffer_resized_ = true;
     }
 };
 
