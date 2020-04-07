@@ -2792,7 +2792,7 @@ class Application
         }
 
         const uint32_t mip_levels =
-            gsl::narrow_cast<uint32_t>(
+            narrow_cast<uint32_t>(
                 std::floor(std::log2(std::max(tex_width, tex_height)))) +
             1;
 
@@ -2828,14 +2828,12 @@ class Application
         copy_buffer_to_image(device, command_pool, queue, staging_buffer,
                              texture_image, tex_width, tex_height);
 
-        // TODO: this will be done when generating mipmaps
-        transition_image_layout(
-            device, command_pool, queue, texture_image, VK_FORMAT_R8G8B8A8_SRGB,
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, mip_levels);
-
         vkDestroyBuffer(device, staging_buffer, nullptr);
         vkFreeMemory(device, staging_buffer_memory, nullptr);
+
+        generate_mipmaps(physical_device, device, command_pool, queue,
+                         texture_image, VK_FORMAT_R8G8B8A8_SRGB, tex_width,
+                         tex_height, mip_levels);
 
         const auto texture_image_view =
             create_image_view(device, texture_image, VK_FORMAT_R8G8B8A8_SRGB,
@@ -2855,7 +2853,7 @@ class Application
             .compareEnable           = VK_FALSE,
             .compareOp               = VK_COMPARE_OP_ALWAYS,
             .minLod                  = 0.0f,
-            .maxLod                  = 0.0f,
+            .maxLod                  = narrow_cast<float>(mip_levels),
             .borderColor             = VK_BORDER_COLOR_INT_OPAQUE_WHITE,
             .unnormalizedCoordinates = VK_FALSE,
         };
@@ -2869,6 +2867,140 @@ class Application
 
         return {texture_image, texture_image_memory, texture_image_view,
                 texture_sampler, mip_levels};
+    }
+
+    static void generate_mipmaps(VkPhysicalDevice physical_device,
+                                 VkDevice device, VkCommandPool command_pool,
+                                 VkQueue queue, VkImage image,
+                                 VkFormat image_format, int32_t tex_width,
+                                 int32_t tex_height, uint32_t mip_levels)
+    {
+
+        VkFormatProperties format_properties = {};
+        vkGetPhysicalDeviceFormatProperties(physical_device, image_format,
+                                            &format_properties);
+
+        if (!(format_properties.optimalTilingFeatures &
+              VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
+        {
+            throw std::runtime_error(
+                "Texture image format does not support linear blitting!");
+        }
+
+        const auto command_buffer =
+            begin_single_time_commands(device, command_pool);
+
+        int32_t mip_width  = tex_width;
+        int32_t mip_height = tex_height;
+        for (uint32_t i = 1; i < mip_levels; ++i)
+        {
+            const VkImageMemoryBarrier blit_barrier = {
+                .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
+                .dstAccessMask       = VK_ACCESS_TRANSFER_READ_BIT,
+                .oldLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .newLayout           = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image               = image,
+                .subresourceRange =
+                    {
+                        .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+                        .baseMipLevel   = i - 1,
+                        .levelCount     = 1,
+                        .baseArrayLayer = 0,
+                        .layerCount     = 1,
+                    },
+            };
+
+            vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
+                                 0, nullptr, 1, &blit_barrier);
+
+            const VkImageBlit blit = {
+                .srcSubresource =
+                    {
+                        .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+                        .mipLevel       = i - 1,
+                        .baseArrayLayer = 0,
+                        .layerCount     = 1,
+                    },
+                .srcOffsets = {{0, 0, 0}, {mip_width, mip_height, 1}},
+                .dstSubresource =
+                    {
+                        .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+                        .mipLevel       = i,
+                        .baseArrayLayer = 0,
+                        .layerCount     = 1,
+                    },
+                .dstOffsets = {{0, 0, 0},
+                               {mip_width > 1 ? mip_width / 2 : 1,
+                                mip_height > 1 ? mip_height / 2 : 1, 1}},
+            };
+
+            vkCmdBlitImage(command_buffer, image,
+                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                           VK_FILTER_LINEAR);
+
+            const VkImageMemoryBarrier transition_barrier = {
+                .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .srcAccessMask       = VK_ACCESS_TRANSFER_READ_BIT,
+                .dstAccessMask       = VK_ACCESS_SHADER_READ_BIT,
+                .oldLayout           = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                .newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image               = image,
+                .subresourceRange =
+                    {
+                        .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+                        .baseMipLevel   = i - 1,
+                        .levelCount     = 1,
+                        .baseArrayLayer = 0,
+                        .layerCount     = 1,
+                    },
+            };
+
+            vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                                 nullptr, 0, nullptr, 1, &transition_barrier);
+
+            if (mip_width > 1)
+            {
+                mip_width /= 2;
+            }
+            if (mip_height > 1)
+            {
+                mip_height /= 2;
+            }
+        }
+
+        const VkImageMemoryBarrier transition_last_mipmap_barrier = {
+            .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask       = VK_ACCESS_SHADER_READ_BIT,
+            .oldLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image               = image,
+            .subresourceRange =
+                {
+                    .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel   = mip_levels - 1,
+                    .levelCount     = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount     = 1,
+                },
+        };
+
+        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                             nullptr, 0, nullptr, 1,
+                             &transition_last_mipmap_barrier);
+
+        end_single_time_commands(device, command_pool, queue, command_buffer);
     }
 };
 
