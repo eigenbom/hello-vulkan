@@ -141,11 +141,12 @@ struct Vertex
 {
     vec3 pos;
     vec3 colour;
+    vec3 normal;
     vec2 tex_coord;
 
     Vertex(vec3 pos = {0, 0, 0}, vec3 colour = {1, 1, 1},
-           vec2 tex_coord = {0, 0}) noexcept
-        : pos(pos), colour(colour), tex_coord(tex_coord)
+           vec3 normal = {0, 0, 0}, vec2 tex_coord = {0, 0}) noexcept
+        : pos(pos), colour(colour), normal(normal), tex_coord(tex_coord)
     {
     }
 
@@ -157,7 +158,7 @@ struct Vertex
                 .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
     }
 
-    static constexpr std::array<VkVertexInputAttributeDescription, 3>
+    static constexpr std::array<VkVertexInputAttributeDescription, 4>
     get_attribute_descriptions() noexcept
     {
         return {{
@@ -178,6 +179,13 @@ struct Vertex
             {
                 .location = 2,
                 .binding  = 0,
+                .format   = VK_FORMAT_R32G32B32_SFLOAT,
+                .offset   = offsetof(Vertex, normal),
+            },
+
+            {
+                .location = 3,
+                .binding  = 0,
                 .format   = VK_FORMAT_R32G32_SFLOAT,
                 .offset   = offsetof(Vertex, tex_coord),
             },
@@ -190,6 +198,7 @@ struct UniformBufferObject
     alignas(16) glm::mat4 model;
     alignas(16) glm::mat4 view;
     alignas(16) glm::mat4 proj;
+    alignas(16) float time;
 };
 
 static constexpr vec4 rgba_to_vec4(uint32_t rgba) noexcept
@@ -382,10 +391,9 @@ class Application
                     glm::cross(vec3(mouse_grab_transform_ * vec4(0, 0, 1, 1)),
                                vec3(0, 1, 0)));
 
-                const mat4 pan =
-                    glm::rotate(mat4(1.0),
-                                glm::radians(diff.x * 0.33f), vec3(0, 1, 0));
-                
+                const mat4 pan = glm::rotate(
+                    mat4(1.0), glm::radians(diff.x * 0.33f), vec3(0, 1, 0));
+
                 const mat4 translate =
                     glm::translate(mat4(1.0), vec3(0, diff.y * 0.01f, 0));
                 const mat4 tilt = glm::rotate(
@@ -394,10 +402,11 @@ class Application
                 camera_transform_ =
                     tilt * mouse_grab_transform_ * translate * pan;
             }
-            else {
+            else
+            {
                 const float dt = last_frame_duration.count() / 1000.0f;
-                const mat4 pan = glm::rotate(mat4(1.0), glm::radians(dt * 5.0f),
-                                             vec3(0, 1, 0));                
+                const mat4 pan = glm::rotate(mat4(1.0), glm::radians(dt * 2.0f),
+                                             vec3(0, 1, 0));
                 camera_transform_ = camera_transform_ * pan;
             }
 
@@ -417,7 +426,7 @@ class Application
             constexpr int max_fps = 120; // Set to 0 for unlimited
 
             if constexpr (max_fps > 0)
-            {   
+            {
                 static const std::chrono::milliseconds min_ms_per_frame =
                     std::chrono::milliseconds {
                         (int)std::ceil(1000.0f / max_fps)};
@@ -1427,8 +1436,10 @@ class Application
                     "Failed to begin recording command buffer!");
             }
 
-            const vec4 lighter = srgb_to_linear(rgba_to_vec4(0xf4f4f8ff));
-            const auto bg      = lighter;
+            // const vec4 lighter = srgb_to_linear(rgba_to_vec4(0xf4f4f8ff));
+            // const auto bg      = lighter;
+            const vec4 bg {0.537f, 0.671f, 0.847f , 1.0f};
+            
 
             const std::array<VkClearValue, 3> clear_values = {{
                 {bg.r, bg.g, bg.b, bg.a},
@@ -2151,11 +2162,12 @@ class Application
 
         const mat4 model_transform = mat4(1.0f);
 
-        UniformBufferObject ubo = {
+        const UniformBufferObject ubo = {
             .model = model_transform,
             .view  = camera_transform_,
             .proj  = glm::perspective(glm::radians(70.0f), aspect_ratio, 0.01f,
                                      10.0f),
+            .time  = time,
         };
 
         void *data = nullptr;
@@ -2441,6 +2453,19 @@ class Application
         std::string texture_name      = {};
     };
 
+    static void compute_normals_from_triangles(std::vector<Vertex> &vertices)
+    {
+        for (index_t i = 0; i < std::ssize(vertices); i += 3)
+        {
+            const vec3 normal = glm::normalize(
+                glm::cross(vertices[i + 1].pos - vertices[i].pos,
+                           vertices[i + 2].pos - vertices[i].pos));
+            vertices[i].normal     = normal;
+            vertices[i + 1].normal = normal;
+            vertices[i + 2].normal = normal;
+        }
+    }
+
     static std::vector<MeshObject> create_octahedron()
     {
         static constexpr std::array<vec3, 6> pos = {{
@@ -2458,7 +2483,7 @@ class Application
         const vec4 yellow = srgb_to_linear(rgba_to_vec4(0xfed766ff));
         const vec4 light  = srgb_to_linear(rgba_to_vec4(0xe6e6eaff));
 
-        const std::vector<Vertex> vertices = {{
+        std::vector<Vertex> vertices = {{
             {pos[0], red},
             {pos[1], red},
             {pos[4], red},
@@ -2491,6 +2516,7 @@ class Application
             {pos[5], yellow * darken_factor},
             {pos[0], yellow * darken_factor},
         }};
+        compute_normals_from_triangles(vertices);
 
         const std::vector<uint16_t> indices = {{
             0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
@@ -2500,7 +2526,7 @@ class Application
         return {{
             vertices,
             indices,
-            "textures\\moonquest.png",
+            "assets\\moonquest.png",
         }};
     }
 
@@ -2535,39 +2561,42 @@ class Application
 
                 const vec3 p = origin + normal * (opposite_face ? -2.0f : 0.0f);
 
+                const vec3 n = normal * (opposite_face ? -1.0f : 1.0f);
+
                 const vec3 c = vec3(1, 1, 1);
-                vertices.emplace_back(p, c, vec2(0, 1));
+                vertices.emplace_back(p, c, n, vec2(0, 1));
                 if (opposite_face)
                 {
-                    vertices.emplace_back(p + 2.0f * v, c, vec2(0, 0));
-                    vertices.emplace_back(p + 2.0f * u, c, vec2(1, 1));
+                    vertices.emplace_back(p + 2.0f * v, c, n, vec2(0, 0));
+                    vertices.emplace_back(p + 2.0f * u, c, n, vec2(1, 1));
                 }
                 else
                 {
-                    vertices.emplace_back(p + 2.0f * u, c, vec2(1, 1));
-                    vertices.emplace_back(p + 2.0f * v, c, vec2(0, 0));
+                    vertices.emplace_back(p + 2.0f * u, c, n, vec2(1, 1));
+                    vertices.emplace_back(p + 2.0f * v, c, n, vec2(0, 0));
                 }
 
-                vertices.emplace_back(p + 2.0f * u, c, vec2(1, 1));
+                vertices.emplace_back(p + 2.0f * u, c, n, vec2(1, 1));
                 if (opposite_face)
                 {
-                    vertices.emplace_back(p + 2.0f * v, c, vec2(0, 0));
-                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c,
+                    vertices.emplace_back(p + 2.0f * v, c, n, vec2(0, 0));
+                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c, n,
                                           vec2(1, 0));
                 }
                 else
                 {
-                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c,
+                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c, n,
                                           vec2(1, 0));
-                    vertices.emplace_back(p + 2.0f * v, c, vec2(0, 0));
+                    vertices.emplace_back(p + 2.0f * v, c, n, vec2(0, 0));
                 }
             }
         }
+        // compute_normals_from_triangles(vertices);
 
         return {{
             vertices,
             indices,
-            "textures\\moonquest.png",
+            "assets\\moonquest.png",
         }};
     }
 
@@ -2598,9 +2627,9 @@ class Application
                 indices.push_back(indices.back() + 1);
 
                 const vec3 p = origin + normal * (opposite_face ? -2.0f : 0.0f);
-
-                const float du                    = 1.0f / 4.0f;
-                const float dv                    = 1.0f / 3.0f;
+                const vec3 n = normal * (opposite_face ? -1.0f : 1.0f);
+                constexpr float du                = 1.0f / 4.0f;
+                constexpr float dv                = 1.0f / 3.0f;
                 const std::array<vec2, 4> side_uv = {{
                     {0, dv},
                     {du, dv},
@@ -2618,39 +2647,41 @@ class Application
                 const std::array<vec2, 4> &uv = (axis == 1) ? top_uv : side_uv;
 
                 const vec3 c = vec3(1, 1, 1);
-                vertices.emplace_back(p, c, uv[0]);
+                vertices.emplace_back(p, c, n, uv[0]);
                 if (opposite_face)
                 {
-                    vertices.emplace_back(p + 2.0f * v, c, uv[3]);
-                    vertices.emplace_back(p + 2.0f * u, c, uv[1]);
+                    vertices.emplace_back(p + 2.0f * v, c, n, uv[3]);
+                    vertices.emplace_back(p + 2.0f * u, c, n, uv[1]);
                 }
                 else
                 {
-                    vertices.emplace_back(p + 2.0f * u, c, uv[1]);
-                    vertices.emplace_back(p + 2.0f * v, c, uv[3]);
+                    vertices.emplace_back(p + 2.0f * u, c, n, uv[1]);
+                    vertices.emplace_back(p + 2.0f * v, c, n, uv[3]);
                 }
 
                 indices.push_back(indices.back() + 1);
                 indices.push_back(indices.back() + 1);
                 indices.push_back(indices.back() + 1);
-                vertices.emplace_back(p + 2.0f * u, c, uv[1]);
+                vertices.emplace_back(p + 2.0f * u, c, n, uv[1]);
                 if (opposite_face)
                 {
-                    vertices.emplace_back(p + 2.0f * v, c, uv[3]);
-                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c, uv[2]);
+                    vertices.emplace_back(p + 2.0f * v, c, n, uv[3]);
+                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c, n, uv[2]);
                 }
                 else
                 {
-                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c, uv[2]);
-                    vertices.emplace_back(p + 2.0f * v, c, uv[3]);
+                    vertices.emplace_back(p + 2.0f * u + 2.0f * v, c, n, uv[2]);
+                    vertices.emplace_back(p + 2.0f * v, c, n, uv[3]);
                 }
             }
         }
 
+        compute_normals_from_triangles(vertices);
+
         return {{
             vertices,
             indices,
-            "textures\\grass.png",
+            "assets\\grass.png",
         }};
     }
 
@@ -2741,15 +2772,18 @@ class Application
                     const auto vy = attrib.vertices[3 * idx.vertex_index + 1];
                     const auto vz = attrib.vertices[3 * idx.vertex_index + 2];
 
-                    if (idx.normal_index != -1)
-                    {
-                        const auto nx =
-                            attrib.normals[3 * idx.normal_index + 0];
-                        const auto ny =
-                            attrib.normals[3 * idx.normal_index + 1];
-                        const auto nz =
-                            attrib.normals[3 * idx.normal_index + 2];
-                    }
+                    const vec3 normal = [&idx, &attrib]() -> vec3 {
+                        if (idx.normal_index == -1)
+                        {
+                            return {0, 0, 0};
+                        }
+                        else
+                        {
+                            return {attrib.normals[3 * idx.normal_index + 0],
+                                    attrib.normals[3 * idx.normal_index + 1],
+                                    attrib.normals[3 * idx.normal_index + 2]};
+                        }
+                    }();
 
                     const vec2 tex_coord = [&idx, &attrib]() -> vec2 {
                         if (idx.texcoord_index == -1)
@@ -2773,11 +2807,11 @@ class Application
                         vec3(transform * vec4(vx, vy, vz, 1.0f));
 
                     vertices.emplace_back(transformed_position,
-                                          vec3 {red, green, blue}, tex_coord);
+                                          vec3 {red, green, blue}, normal, tex_coord);
                 }
-                indices.emplace_back(index_offset);
-                indices.emplace_back(index_offset + 2);
-                indices.emplace_back(index_offset + 1);
+                indices.push_back(narrow_cast<uint16_t>(index_offset));
+                indices.push_back(narrow_cast<uint16_t>(index_offset + 2));
+                indices.push_back(narrow_cast<uint16_t>(index_offset + 1));
 
                 index_offset += vertex_count;
             }
