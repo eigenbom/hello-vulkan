@@ -1438,14 +1438,20 @@ class Application
 
             // const vec4 lighter = srgb_to_linear(rgba_to_vec4(0xf4f4f8ff));
             // const auto bg      = lighter;
-            const vec4 bg {0.537f, 0.671f, 0.847f , 1.0f};
-            
+            const vec4 bg {0.537f, 0.671f, 0.847f, 1.0f};
 
-            const std::array<VkClearValue, 3> clear_values = {{
-                {bg.r, bg.g, bg.b, bg.a},
-                {0.0f},
-                {1.0f},
-            }};
+            std::array<VkClearValue, 3> clear_values;
+            clear_values[0].color.float32[0] = bg.r;
+            clear_values[0].color.float32[1] = bg.g;
+            clear_values[0].color.float32[2] = bg.b;
+            clear_values[0].color.float32[3] = bg.a;
+
+            clear_values[1].color.float32[0] = bg.r;
+            clear_values[1].color.float32[1] = bg.g;
+            clear_values[1].color.float32[2] = bg.b;
+            clear_values[1].color.float32[3] = bg.a;
+
+            clear_values[2].depthStencil.depth = 1.0f;
 
             const VkRenderPassBeginInfo render_pass_info = {
                 .sType       = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -2165,9 +2171,9 @@ class Application
         const UniformBufferObject ubo = {
             .model = model_transform,
             .view  = camera_transform_,
-            .proj  = glm::perspective(glm::radians(70.0f), aspect_ratio, 0.01f,
-                                     10.0f),
-            .time  = time,
+            .proj =
+                glm::perspective(glm::radians(70.0f), aspect_ratio, 0.1f, 10.0f),
+            .time = time,
         };
 
         void *data = nullptr;
@@ -2735,7 +2741,7 @@ class Application
                 Expects(vertex_count == 3);
 
                 vec3 centroid = {0.0f, 0.0f, 0.0f};
-                vec3 normal   = {0.0f, 0.0f, 0.0f};
+                vec3 calculated_normal = {0.0f, 0.0f, 0.0f};
                 {
                     const auto get_position = [&](int index) noexcept {
                         const auto idx =
@@ -2756,7 +2762,7 @@ class Application
                         centroid += get_position(vertex_index);
                     }
                     centroid *= (1.0f / vertex_count);
-                    normal = glm::cross(
+                    calculated_normal = glm::cross(
                         glm::normalize(get_position(1) - get_position(0)),
                         glm::normalize(get_position(2) - get_position(0)));
                 }
@@ -2772,10 +2778,10 @@ class Application
                     const auto vy = attrib.vertices[3 * idx.vertex_index + 1];
                     const auto vz = attrib.vertices[3 * idx.vertex_index + 2];
 
-                    const vec3 normal = [&idx, &attrib]() -> vec3 {
+                    const vec3 normal = [&idx, &attrib, calculated_normal]() -> vec3 {
                         if (idx.normal_index == -1)
                         {
-                            return {0, 0, 0};
+                            return calculated_normal;
                         }
                         else
                         {
@@ -2807,7 +2813,8 @@ class Application
                         vec3(transform * vec4(vx, vy, vz, 1.0f));
 
                     vertices.emplace_back(transformed_position,
-                                          vec3 {red, green, blue}, normal, tex_coord);
+                                          vec3 {red, green, blue}, normal,
+                                          tex_coord);
                 }
                 indices.push_back(narrow_cast<uint16_t>(index_offset));
                 indices.push_back(narrow_cast<uint16_t>(index_offset + 2));
