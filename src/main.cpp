@@ -232,8 +232,18 @@ static vec4 srgb_to_linear(vec4 colour) noexcept
 class Application
 {
   private:
-    static constexpr int initial_width_        = 800;
-    static constexpr int initial_height_       = 800;
+    struct Texture
+    {
+        VkImage image_                = {};
+        VkDeviceMemory device_memory_ = {};
+        VkImageView image_view_       = {};
+        VkSampler sampler_            = {};
+        uint32_t mip_levels_          = {};
+    };
+
+    static constexpr int initial_width_  = 800;
+    static constexpr int initial_height_ = 800;
+    static constexpr vec3 initial_camera_position_ {0.0f, 1.5f, -3.0f};
     static constexpr int max_frames_in_flight_ = 2;
     static constexpr bool enable_validation_layers_ =
         (gBuildConfig.mode == BuildMode::Debug);
@@ -284,21 +294,12 @@ class Application
     VkImage depth_image_                                 = {};
     VkDeviceMemory depth_image_memory_                   = {};
     VkImageView depth_image_view_                        = {};
-
-    mat4 camera_transform_     = {};
-    bool mouse_grab_           = false;
-    vec2 mouse_grab_origin_    = {};
-    mat4 mouse_grab_transform_ = {};
-
-    struct Texture
-    {
-        VkImage image_                = {};
-        VkDeviceMemory device_memory_ = {};
-        VkImageView image_view_       = {};
-        VkSampler sampler_            = {};
-        uint32_t mip_levels_          = {};
-    };
-
+    mat4 camera_transform_ =
+        glm::lookAt(initial_camera_position_, vec3(0.0f, 0.0f, 0.0f),
+                    vec3(0.0f, -1.0f, 0.0f));
+    bool mouse_grab_                               = false;
+    vec2 mouse_grab_origin_                        = {};
+    mat4 mouse_grab_transform_                     = {};
     std::vector<Texture> textures_                 = {};
     std::map<std::string, uint32_t> texture_names_ = {};
     VkSampleCountFlagBits msaa_samples_            = VK_SAMPLE_COUNT_1_BIT;
@@ -363,13 +364,19 @@ class Application
 
     void main_loop()
     {
-        auto time_start = std::chrono::steady_clock::now();
-        const vec3 initial_position {0.0f, 1.5f, -3.0f};
-        camera_transform_ = glm::lookAt(
-            initial_position, vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, -1.0f, 0.0f));
-        std::chrono::milliseconds last_frame_duration {0};
+        using std::chrono::duration_cast;
+        using std::chrono::microseconds;
+        using std::chrono::steady_clock;
 
-        // uint32_t frame_count = 0;
+        constexpr int max_fps = 0; // Set to 0 for unlimited
+
+        auto time_start = steady_clock::now();
+        microseconds last_frame_us {0};
+        const microseconds frame_min_us {narrow_cast<long>(
+            std::ceil(1'000'000.0f / (max_fps > 0 ? max_fps : 1'000'000)))};
+        auto frame_count_time_start = time_start;
+        uint32_t frame_count        = 0;
+
         while (!glfwWindowShouldClose(window_))
         {
             glfwPollEvents();
@@ -377,82 +384,71 @@ class Application
             // Update camera transform
             if (mouse_grab_)
             {
-                double xpos = 0;
-                double ypos = 0;
-                glfwGetCursorPos(window_, &xpos, &ypos);
-                const vec2 current_mouse_pos = vec2(xpos, ypos);
-                const vec2 diff = current_mouse_pos - mouse_grab_origin_;
-                // log_info("diff {},{}", diff.x, diff.y);
-
-                // Create new view transform
-                // NB: Flip y due to opengl/vulkan differences
-
+                // Track mouse-drag
+                const vec2 current_mouse_pos = [this]() {
+                    double xpos = 0;
+                    double ypos = 0;
+                    glfwGetCursorPos(window_, &xpos, &ypos);
+                    return vec2(xpos, ypos);
+                }();
+                const vec2 diff      = current_mouse_pos - mouse_grab_origin_;
                 const vec3 tilt_axis = glm::normalize(
                     glm::cross(vec3(mouse_grab_transform_ * vec4(0, 0, 1, 1)),
                                vec3(0, 1, 0)));
-
                 const mat4 pan = glm::rotate(
                     mat4(1.0), glm::radians(diff.x * 0.33f), vec3(0, 1, 0));
-
                 const mat4 translate =
                     glm::translate(mat4(1.0), vec3(0, diff.y * 0.01f, 0));
                 const mat4 tilt = glm::rotate(
                     mat4(1.0), glm::radians(diff.y * 0.1f), vec3(1, 0, 0));
-
                 camera_transform_ =
                     tilt * mouse_grab_transform_ * translate * pan;
             }
             else
             {
-                const float dt = last_frame_duration.count() / 1000.0f;
+                // Rotate slowly when idle
+                const float dt = last_frame_us.count() / 1'000'000.0f;
                 const mat4 pan = glm::rotate(mat4(1.0), glm::radians(dt * 2.0f),
                                              vec3(0, 1, 0));
                 camera_transform_ = camera_transform_ * pan;
             }
 
             // Render
-
             draw_frame();
 
             // Compute frame duration
-            const auto time_end = std::chrono::steady_clock::now();
-            const auto ms_per_frame =
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    time_end - time_start);
-            time_start          = time_end;
-            last_frame_duration = ms_per_frame;
-
-            // Limit FPS
-            constexpr int max_fps = 120; // Set to 0 for unlimited
+            const auto time_end = steady_clock::now();
+            const auto frame_us =
+                duration_cast<microseconds>(time_end - time_start);
+            time_start    = time_end;
+            last_frame_us = frame_us;
 
             if constexpr (max_fps > 0)
             {
-                static const std::chrono::milliseconds min_ms_per_frame =
-                    std::chrono::milliseconds {
-                        (int)std::ceil(1000.0f / max_fps)};
-                if (ms_per_frame < min_ms_per_frame)
+                // Limit FPS
+                if (frame_us < frame_min_us)
                 {
-                    std::this_thread::sleep_for(std::chrono::milliseconds {
-                        min_ms_per_frame - ms_per_frame});
+                    std::this_thread::sleep_for(frame_min_us - frame_us);
                 }
             }
 
-            /*
             ++frame_count;
-            if (frame_count == 10000)
+            constexpr int frame_count_max = 100;
+            if (frame_count == frame_count_max)
             {
-                const auto time_end = std::chrono::steady_clock::now();
-                log_info(
-                    "Frame time: {} FPS",
-                    1000000.0 /
-                        (std::chrono::duration_cast<std::chrono::microseconds>(
-                             time_end - time_start)
-                             .count() /
-                         10000));
-                time_start  = time_end;
-                frame_count = 0;
+                const auto frame_count_time_end = steady_clock::now();
+                const auto frame_time_total     = duration_cast<microseconds>(
+                    frame_count_time_end - frame_count_time_start);
+
+                const auto frame_time_fps =
+                    (1'000'000.0 / frame_time_total.count()) / frame_count_max;
+                frame_count_time_start = frame_count_time_end;
+                frame_count            = 0;
+
+                log_info("Frame times: {}ms, {}ms, {}fps",
+                         frame_us.count() / 1000.0,
+                         frame_min_us.count() / 1000.0, frame_time_fps);
             }
-            */
         }
         vkDeviceWaitIdle(device_);
     }
@@ -2171,9 +2167,9 @@ class Application
         const UniformBufferObject ubo = {
             .model = model_transform,
             .view  = camera_transform_,
-            .proj =
-                glm::perspective(glm::radians(70.0f), aspect_ratio, 0.1f, 10.0f),
-            .time = time,
+            .proj  = glm::perspective(glm::radians(70.0f), aspect_ratio, 0.1f,
+                                     10.0f),
+            .time  = time,
         };
 
         void *data = nullptr;
@@ -2740,7 +2736,7 @@ class Application
                     shapes[shape_index].mesh.num_face_vertices[face_index];
                 Expects(vertex_count == 3);
 
-                vec3 centroid = {0.0f, 0.0f, 0.0f};
+                vec3 centroid          = {0.0f, 0.0f, 0.0f};
                 vec3 calculated_normal = {0.0f, 0.0f, 0.0f};
                 {
                     const auto get_position = [&](int index) noexcept {
@@ -2778,7 +2774,8 @@ class Application
                     const auto vy = attrib.vertices[3 * idx.vertex_index + 1];
                     const auto vz = attrib.vertices[3 * idx.vertex_index + 2];
 
-                    const vec3 normal = [&idx, &attrib, calculated_normal]() -> vec3 {
+                    const vec3 normal = [&idx, &attrib,
+                                         calculated_normal]() -> vec3 {
                         if (idx.normal_index == -1)
                         {
                             return calculated_normal;
