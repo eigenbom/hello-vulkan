@@ -51,6 +51,10 @@
 #include <thread>
 #include <vector>
 
+#include <windows.h>
+#include <timeapi.h>
+#pragma comment(lib, "winmm.lib")
+
 using glm::vec2, glm::vec3, glm::vec4, glm::mat4;
 using index_t = gsl::index;
 using gsl::narrow_cast;
@@ -87,7 +91,7 @@ void log(std::string_view header, std::string_view format_string,
 {
     std::cout << "[" << header << "] "
               << fmt::format(format_string, std::forward<Args>(args)...)
-              << std::endl;
+              << "\n";
 }
 
 template <class... Args>
@@ -364,21 +368,29 @@ class Application
 
     void main_loop()
     {
+        if (timeBeginPeriod(1) != TIMERR_NOERROR)
+        {
+            log_error("Can't adjust timer resolution");
+        }
+
         using std::chrono::duration_cast;
         using std::chrono::microseconds;
-        using std::chrono::steady_clock;
+        using std::chrono::milliseconds;
+        using clock = std::chrono::high_resolution_clock;
 
-        constexpr int max_fps = 0; // Set to 0 for unlimited
+        constexpr int max_fps = 120; // Set to 0 for unlimited
 
-        auto time_start = steady_clock::now();
         microseconds last_frame_us {0};
         const microseconds frame_min_us {narrow_cast<long>(
             std::ceil(1'000'000.0f / (max_fps > 0 ? max_fps : 1'000'000)))};
-        auto frame_count_time_start = time_start;
+        auto frame_count_time_start = clock::now();
         uint32_t frame_count        = 0;
 
         while (!glfwWindowShouldClose(window_))
         {
+
+            const auto time_start = clock::now();
+
             glfwPollEvents();
 
             // Update camera transform
@@ -417,40 +429,47 @@ class Application
             draw_frame();
 
             // Compute frame duration
-            const auto time_end = steady_clock::now();
-            const auto frame_us =
-                duration_cast<microseconds>(time_end - time_start);
-            time_start    = time_end;
-            last_frame_us = frame_us;
+            const auto time_end = clock::now();
+            last_frame_us = duration_cast<microseconds>(time_end - time_start);
 
             if constexpr (max_fps > 0)
             {
-                // Limit FPS
-                if (frame_us < frame_min_us)
+                // Clamp FPS
+                if (last_frame_us < frame_min_us)
                 {
-                    std::this_thread::sleep_for(frame_min_us - frame_us);
+                    std::this_thread::sleep_for(frame_min_us - last_frame_us);
                 }
             }
+
+            /*
+            const auto time_end_2 = clock::now();
+            log_info(
+                "Frame times: {} us, {} us",
+                duration_cast<microseconds>(time_end_2 - time_start).count(),
+                frame_min_us.count());
+            */
 
             ++frame_count;
             constexpr int frame_count_max = 100;
             if (frame_count == frame_count_max)
             {
-                const auto frame_count_time_end = steady_clock::now();
-                const auto frame_time_total     = duration_cast<microseconds>(
+                const auto frame_count_time_end = clock::now();
+                const auto frame_time_total     = duration_cast<milliseconds>(
                     frame_count_time_end - frame_count_time_start);
-
                 const auto frame_time_fps =
-                    (1'000'000.0 / frame_time_total.count()) / frame_count_max;
+                    frame_count_max * (1'000.0 / frame_time_total.count());
+                frame_count = 0;
                 frame_count_time_start = frame_count_time_end;
-                frame_count            = 0;
 
-                log_info("Frame times: {}ms, {}ms, {}fps",
-                         frame_us.count() / 1000.0,
-                         frame_min_us.count() / 1000.0, frame_time_fps);
+                log_info("Frame times: {} us, {} us, {} fps, {}",
+                         last_frame_us.count(), frame_min_us.count(),
+                         frame_time_fps, frame_time_total.count());
+                
             }
         }
         vkDeviceWaitIdle(device_);
+
+        timeEndPeriod(1);
     }
 
     void cleanup() noexcept
@@ -591,8 +610,7 @@ class Application
                        return std::find_if(
                                   available_layers.begin(),
                                   available_layers.end(),
-                                  [validation_layer](
-                                      auto available_layer) noexcept {
+                                  [validation_layer](auto available_layer) {
                                       return strncmp(
                                                  validation_layer,
                                                  &available_layer.layerName[0],
@@ -1203,7 +1221,7 @@ class Application
                         create_texture(physical_device_, device_, command_pool_,
                                        graphics_queue_, mesh.texture_name);
                     textures_.push_back(texture);
-                    auto result = texture_names_.emplace(
+                    const auto result = texture_names_.emplace(
                         mesh.texture_name,
                         narrow_cast<uint32_t>(textures_.size() - 1));
                     it = result.first;
