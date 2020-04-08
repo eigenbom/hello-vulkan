@@ -96,14 +96,14 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
-      <AdditionalIncludeDirectories>E:\dev\vulkan\third_party\gsl\include;E:\lib\VulkanSDK\1.2.131.2\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>E:\dev\vulkan\third_party\;E:\dev\vulkan\third_party\fmt\include;E:\dev\vulkan\third_party\gsl\include;E:\dev\vulkan\third_party\glfw\include;E:\lib\VulkanSDK\1.2.131.2\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <ShowProgress>NotSet</ShowProgress>
-      <AdditionalLibraryDirectories>E:\lib\VulkanSDK\1.2.131.2\Lib32;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)\..\third_party\glfw;E:\lib\VulkanSDK\1.2.131.2\Lib32;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>vulkan-1.lib;glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -128,7 +128,7 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
-      <AdditionalIncludeDirectories>E:\dev\vulkan\third_party\gsl\include;E:\lib\VulkanSDK\1.2.131.2\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>E:\dev\vulkan\third_party\;E:\dev\vulkan\third_party\fmt\include;E:\dev\vulkan\third_party\gsl\include;E:\dev\vulkan\third_party\glfw\include;E:\lib\VulkanSDK\1.2.131.2\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -136,8 +136,8 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <ShowProgress>NotSet</ShowProgress>
-      <AdditionalLibraryDirectories>E:\lib\VulkanSDK\1.2.131.2\Lib32;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)\..\third_party\glfw;E:\lib\VulkanSDK\1.2.131.2\Lib32;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>vulkan-1.lib;glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -159,32 +159,15 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\src\main.cpp" />
+    <ClCompile Include="..\third_party\fmt\src\format.cc" />
+    <ClCompile Include="..\third_party\fmt\src\os.cc" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\.clang-format" />
     <None Include="..\shaders\shader.frag" />
     <None Include="..\shaders\shader.vert" />
-    <None Include="packages.config" />
     <None Include="vulkan.ruleset" />
   </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="..\src\json.hpp" />
-    <ClInclude Include="..\src\stb_image.h" />
-    <ClInclude Include="..\src\tiny_gltf.h" />
-    <ClInclude Include="..\src\tiny_obj_loader.h" />
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <ImportGroup Label="ExtensionTargets">
-    <Import Project="packages\glfw.3.3.2\build\native\glfw.targets" Condition="Exists('packages\glfw.3.3.2\build\native\glfw.targets')" />
-    <Import Project="packages\fmt.6.1.2\build\fmt.targets" Condition="Exists('packages\fmt.6.1.2\build\fmt.targets')" />
-    <Import Project="packages\glm.0.9.9.700\build\native\glm.targets" Condition="Exists('packages\glm.0.9.9.700\build\native\glm.targets')" />
-  </ImportGroup>
-  <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
-    <PropertyGroup>
-      <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
-    </PropertyGroup>
-    <Error Condition="!Exists('packages\glfw.3.3.2\build\native\glfw.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\glfw.3.3.2\build\native\glfw.targets'))" />
-    <Error Condition="!Exists('packages\fmt.6.1.2\build\fmt.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\fmt.6.1.2\build\fmt.targets'))" />
-    <Error Condition="!Exists('packages\glm.0.9.9.700\build\native\glm.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\glm.0.9.9.700\build\native\glm.targets'))" />
-  </Target>
+  <ImportGroup Label="ExtensionTargets" />
 </Project>

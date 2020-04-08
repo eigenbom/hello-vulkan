@@ -11,12 +11,6 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-#define TINYGLTF_IMPLEMENTATION
-#define TINYGLTF_NO_STB_IMAGE_WRITE
-#define TINYGLTF_NO_STB_IMAGE
-#define TINYGLTF_USE_CPP14
-#include "tiny_gltf.h"
-
 #define GLFW_EXPOSE_NATIVE_WIN32
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
@@ -50,10 +44,6 @@
 #include <string_view>
 #include <thread>
 #include <vector>
-
-#include <windows.h>
-#include <timeapi.h>
-#pragma comment(lib, "winmm.lib")
 
 using glm::vec2, glm::vec3, glm::vec4, glm::mat4;
 using index_t = gsl::index;
@@ -245,16 +235,18 @@ class Application
         uint32_t mip_levels_          = {};
     };
 
-    static constexpr int initial_width_  = 800;
-    static constexpr int initial_height_ = 800;
-    static constexpr vec3 initial_camera_position_ {0.0f, 1.5f, -3.0f};
-    static constexpr int max_frames_in_flight_ = 2;
-    static constexpr bool enable_validation_layers_ =
-        (gBuildConfig.mode == BuildMode::Debug);
+    // Limit the framerate. Coarse accuracy. Set to 0 for unlimited.
+    static constexpr int max_fps                   = 120;
+    static constexpr int initial_width_            = 800;
+    static constexpr int initial_height_           = 800;
+    static constexpr vec3 initial_camera_position_ = {0.0f, 1.5f, -3.0f};
+    static constexpr int max_frames_in_flight_     = 2;
     static constexpr std::array validation_layers_ = {
         "VK_LAYER_KHRONOS_validation"};
     static constexpr std::array device_extensions_ = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    static constexpr bool enable_validation_layers_ =
+        gBuildConfig.mode == BuildMode::Debug;
 
     GLFWwindow *window_                                  = nullptr;
     VkInstance instance_                                 = {};
@@ -368,17 +360,10 @@ class Application
 
     void main_loop()
     {
-        if (timeBeginPeriod(1) != TIMERR_NOERROR)
-        {
-            log_error("Can't adjust timer resolution");
-        }
-
         using std::chrono::duration_cast;
         using std::chrono::microseconds;
         using std::chrono::milliseconds;
         using clock = std::chrono::high_resolution_clock;
-
-        constexpr int max_fps = 120; // Set to 0 for unlimited
 
         microseconds last_frame_us {0};
         const microseconds frame_min_us {narrow_cast<long>(
@@ -437,39 +422,37 @@ class Application
                 // Clamp FPS
                 if (last_frame_us < frame_min_us)
                 {
-                    std::this_thread::sleep_for(frame_min_us - last_frame_us);
+                    const auto sleep_ms =
+                        ((frame_min_us - last_frame_us).count() - 999) / 1000;
+                    if (sleep_ms > 0)
+                    {
+                        // NB: Not an accurate sleep function
+                        std::this_thread::sleep_for(milliseconds {sleep_ms});
+                    }
                 }
             }
 
-            /*
-            const auto time_end_2 = clock::now();
-            log_info(
-                "Frame times: {} us, {} us",
-                duration_cast<microseconds>(time_end_2 - time_start).count(),
-                frame_min_us.count());
-            */
-
-            ++frame_count;
-            constexpr int frame_count_max = 100;
-            if (frame_count == frame_count_max)
+            if constexpr (max_fps == 0)
             {
-                const auto frame_count_time_end = clock::now();
-                const auto frame_time_total     = duration_cast<milliseconds>(
-                    frame_count_time_end - frame_count_time_start);
-                const auto frame_time_fps =
-                    frame_count_max * (1'000.0 / frame_time_total.count());
-                frame_count = 0;
-                frame_count_time_start = frame_count_time_end;
+                ++frame_count;
+                constexpr int frame_count_max = 100;
+                if (frame_count == frame_count_max)
+                {
+                    const auto frame_count_time_end = clock::now();
+                    const auto frame_time_total = duration_cast<milliseconds>(
+                        frame_count_time_end - frame_count_time_start);
+                    const auto frame_time_fps =
+                        frame_count_max * (1'000.0 / frame_time_total.count());
+                    frame_count            = 0;
+                    frame_count_time_start = frame_count_time_end;
 
-                log_info("Frame times: {} us, {} us, {} fps, {}",
-                         last_frame_us.count(), frame_min_us.count(),
-                         frame_time_fps, frame_time_total.count());
-                
+                    log_info("Frame times: {} us, {} us, {} fps",
+                             last_frame_us.count(), frame_min_us.count(),
+                             frame_time_fps);
+                }
             }
         }
         vkDeviceWaitIdle(device_);
-
-        timeEndPeriod(1);
     }
 
     void cleanup() noexcept
