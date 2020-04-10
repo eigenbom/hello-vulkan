@@ -1,8 +1,4 @@
-﻿################################################################################
-# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
-################################################################################
-
-/project-msvc/.vs/vulkan/v16
+﻿/project-msvc/.vs/vulkan/v16
 /project-msvc/Debug
 /project-msvc/Release
 /project-msvc/packages
